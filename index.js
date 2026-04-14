@@ -1,6 +1,6 @@
 require('dotenv').config();
 const express = require('express');
-const fetch = require('node-fetch'); // Si usas Node.js 18+, puedes borrar esta línea
+const fetch = require('node-fetch'); // Puedes quitarlo si usas Node.js 18+
 const Groq = require('groq-sdk');
 
 const app = express();
@@ -97,20 +97,20 @@ app.post('/webhook', async (req, res) => {
     historial.push({ role: "user", content: queryText });
 
     try {
-        // 4. Llamada a la API de Groq
+        // 4. Llamada a la API de Groq (MODELO ACTUALIZADO)
         const respuestaGroq = await groq.chat.completions.create({
             messages: historial,
-            model: "llama3-8b-8192", // Usamos Llama 3 porque es excelente para forzar JSON
+            model: "llama-3.1-8b-instant", // Modelo actualizado y soportado
             response_format: { type: "json_object" },
-            temperature: 0.2 // Muy bajo para que no alucine datos
+            temperature: 0.2 // Muy bajo para evitar alucinaciones
         });
 
         const contenidoIA = respuestaGroq.choices[0].message.content;
-        console.log(`[IA JSON Crudo] ->`, contenidoIA); // Para que veas en consola lo que decide la IA
+        console.log(`[IA JSON Crudo] ->`, contenidoIA); // Útil para depurar en consola
         
         const iaJSON = JSON.parse(contenidoIA);
 
-        // Guardamos la respuesta en el historial
+        // Guardamos la respuesta de la IA en el historial
         historial.push({ role: "assistant", content: contenidoIA });
 
         // 5. Ejecutar acciones si la IA decidió terminar la reserva
@@ -121,7 +121,7 @@ app.post('/webhook', async (req, res) => {
                 Estado: "Confirmado"
             });
             
-            // Limpiamos la memoria de la sesión para futuras consultas
+            // Limpiamos la memoria de la sesión para futuras reservas de este usuario
             sesiones.delete(sessionId); 
         }
 
