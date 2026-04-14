@@ -20,7 +20,7 @@ async function mejorarRespuesta(base, contexto = "") {
             messages: [
                 {
                     role: "system",
-                    content: "Eres un asistente amigable de renta de autos. Responde claro, natural y breve."
+                    content: "Eres el asistente amigable de AutoRent AI. Responde de forma clara, natural, breve y persuasiva."
                 },
                 {
                     role: "user",
@@ -32,7 +32,7 @@ async function mejorarRespuesta(base, contexto = "") {
 
         return response.choices[0].message.content;
     } catch {
-        return base;
+        return base; // Fallback al texto original si la IA falla
     }
 }
 
@@ -60,12 +60,12 @@ async function guardarReserva(datos) {
             body: JSON.stringify({ data: [datos] })
         });
     } catch (e) {
-        console.error(e);
+        console.error("Error guardando reserva:", e);
     }
 }
 
 // ===============================
-// 🤖 IA FALLBACK
+// 🤖 IA FALLBACK (Para preguntas libres)
 // ===============================
 async function consultarGroq(texto) {
     try {
@@ -73,7 +73,7 @@ async function consultarGroq(texto) {
             messages: [
                 {
                     role: "system",
-                    content: "Eres un asistente amable de renta de autos en México."
+                    content: "Eres un asistente amable de renta de autos en México. Ayudas a los clientes con dudas generales sobre autos."
                 },
                 { role: "user", content: texto }
             ],
@@ -82,162 +82,177 @@ async function consultarGroq(texto) {
 
         return r.choices[0].message.content;
     } catch {
-        return "No entendí bien 😅 ¿puedes repetirlo?";
+        return "No entendí bien 😅 ¿puedes repetirlo o intentar de nuevo?";
     }
 }
 
 // ===============================
-// 🚀 WEBHOOK
+// 🚀 WEBHOOK PRINCIPAL
 // ===============================
 app.post('/webhook', async (req, res) => {
-
-    const intent = req.body.queryResult.intent.displayName;
-    const params = req.body.queryResult.parameters;
-    const contexts = req.body.queryResult.outputContexts || [];
-    const queryText = req.body.queryResult.queryText.toLowerCase();
+    const queryResult = req.body.queryResult;
+    const intent = queryResult.intent.displayName;
+    const params = queryResult.parameters;
+    const contexts = queryResult.outputContexts || [];
+    const queryText = queryResult.queryText;
 
     const getParam = (name) => {
-        if (params[name]) return params[name];
+        if (params[name] && params[name] !== "") return params[name];
         for (let c of contexts) {
             if (c.parameters && c.parameters[name]) return c.parameters[name];
         }
         return null;
     };
 
-    console.log("Intent:", intent);
+    console.log("Intent detectado:", intent);
 
     // ===============================
-    // 👋 SALUDO INTELIGENTE
+    // 👋 SALUDO INTELIGENTE (Default Welcome Intent)
     // ===============================
-    if (queryText.includes("hola") || queryText.includes("buenas")) {
+    if (intent === "Default Welcome Intent") {
         const msg = await mejorarRespuesta(
             "Hola 👋 soy AutoRent AI. Puedo ayudarte a rentar un auto, ver precios o disponibilidad.",
-            "saludo inicial"
+            "saludo inicial al cliente"
         );
         return res.json({ fulfillmentText: msg });
     }
 
     // ===============================
-    // 🚗 RESERVA
+    // 🚗 MOSTRAR AUTOS (Texto IA + Imágenes)
     // ===============================
     if (intent === "Reserva") {
         const autos = await obtenerAutos();
 
-        if (!autos.length) {
-            return res.json({ fulfillmentText: "No hay autos disponibles 😢" });
+        if (autos.length === 0) {
+            const msg = await mejorarRespuesta("No hay autos disponibles por ahora.", "sin inventario");
+            return res.json({ fulfillmentText: msg });
         }
 
-        let lista = autos.slice(0, 3).map((a, i) =>
-            `${i + 1}. ${a.Marca} ${a.Modelo} - $${a.Precio_Por_Dia}/día`
-        ).join("\n");
+        // 1. La IA genera un texto introductorio atractivo
+        const introMsg = await mejorarRespuesta(
+            "Aquí tienes nuestras mejores opciones de autos disponibles. ¿Cuál de estos te interesa?", 
+            "mostrar catálogo de autos"
+        );
 
-        const base = `Autos disponibles:\n${lista}\n¿Cuál te interesa?`;
-        const msg = await mejorarRespuesta(base, "mostrar autos");
+        // 2. Creamos las tarjetas visuales (ESTO NO PASA POR LA IA PARA NO ROMPER EL JSON)
+        const tarjetas = autos.slice(0, 5).map(a => ({
+            card: {
+                title: `${a.Marca} ${a.Modelo} (${a.Anio})`,
+                subtitle: `💰 $${a.Precio_Por_Dia}/día • ${a.Transmision} • ${a.Capacidad_Pasajeros} pasajeros`,
+                imageUri: a.Imagen_URL,
+                buttons: [
+                    {
+                        text: `Elegir ${a.Modelo}`,
+                        postback: `Quiero rentar el ${a.Modelo}`
+                    }
+                ]
+            }
+        }));
 
-        return res.json({ fulfillmentText: msg });
+        // 3. Enviamos el texto de la IA combinado con las tarjetas
+        return res.json({
+            fulfillmentMessages: [
+                { text: { text: [introMsg] } },
+                ...tarjetas
+            ]
+        });
     }
 
     // ===============================
-    // 🚗 SELECCIÓN
+    // 🚗 SELECCIÓN DE VEHÍCULO
     // ===============================
     if (intent === "Reserva.SeleccionarVehiculo") {
         const modelo = getParam("modelo");
-
-        const base = `Elegiste el ${modelo}. Ahora calcularé el precio.`;
-        const msg = await mejorarRespuesta(base, "selección de auto");
-
+        const base = `Excelente, elegiste el ${modelo}. Dime tu fecha de inicio y fin para calcular el precio.`;
+        const msg = await mejorarRespuesta(base, "vehículo seleccionado, pidiendo fechas");
         return res.json({ fulfillmentText: msg });
     }
 
     // ===============================
-    // 💰 PRECIO
+    // 💰 COTIZACIÓN / PRECIO
     // ===============================
     if (intent === "Cotizacion.CalcularPrecio") {
         const modelo = getParam("modelo");
-        const fInicio = new Date(getParam("Fecha_inicio"));
-        const fFin = new Date(getParam("Fecha_fin"));
+        const fInicio = getParam("Fecha_inicio");
+        const fFin = getParam("Fecha_fin");
 
-        const dias = Math.max(1, Math.ceil((fFin - fInicio) / (1000 * 60 * 60 * 24)));
+        if (!fInicio || !fFin) {
+            return res.json({ fulfillmentText: await mejorarRespuesta("Necesito las fechas exactas para darte el total.", "faltan fechas") });
+        }
 
+        const dias = Math.max(1, Math.ceil((new Date(fFin) - new Date(fInicio)) / (1000 * 60 * 60 * 24)));
         const autos = await obtenerAutos();
-        const auto = autos.find(a =>
-            (a.Modelo || "").toLowerCase().includes(modelo?.toLowerCase())
-        );
+        const auto = autos.find(a => (a.Modelo || "").toLowerCase().includes(modelo?.toLowerCase()));
 
         const precio = auto ? parseFloat(auto.Precio_Por_Dia) : 35;
         const total = precio * dias;
 
-        const base = `Tu renta por ${dias} días del ${modelo} cuesta $${total}. ¿Quieres agregar extras?`;
-        const msg = await mejorarRespuesta(base, "cotización");
+        const base = `El costo total por ${dias} día(s) para el ${modelo} es $${total}. ¿Deseas agregar extras como GPS o Seguro?`;
+        const msg = await mejorarRespuesta(base, "cotización calculada");
 
         return res.json({ fulfillmentText: msg });
     }
 
     // ===============================
-    // ➕ EXTRAS
+    // ➕ AGREGAR EXTRAS
     // ===============================
     if (intent === "Reserva.AgregarExtras") {
         const extra = getParam("extra") || "ninguno";
-
         let costo = 0;
-        if (extra.includes("seguro")) costo = 20;
-        if (extra.includes("gps")) costo = 10;
+        
+        if (extra.toLowerCase().includes("seguro")) costo = 20;
+        if (extra.toLowerCase().includes("gps")) costo = 10;
 
-        const base = `Agregué ${extra}. Costo adicional $${costo}. ¿Confirmamos?`;
-        const msg = await mejorarRespuesta(base, "extras");
+        const base = `He agregado ${extra}. Esto suma $${costo} al total. ¿Confirmamos tu reserva?`;
+        const msg = await mejorarRespuesta(base, "extras agregados");
 
         return res.json({ fulfillmentText: msg });
     }
 
     // ===============================
-    // ✅ CONFIRMAR
+    // ✅ CONFIRMAR RESERVA
     // ===============================
     if (intent === "Reserva.Confirmar") {
-
         const modelo = getParam("modelo");
         const fechaInicio = getParam("Fecha_inicio");
         const fechaFin = getParam("Fecha_fin");
         const extra = getParam("extra") || "ninguno";
-
-        const folio = "RES-" + Math.floor(Math.random() * 10000);
+        const folio = "RES-" + Math.floor(1000 + Math.random() * 9000);
 
         await guardarReserva({
             Modelo: modelo,
             Fecha_inicio: fechaInicio,
             Fecha_fin: fechaFin,
             Extras: extra,
-            Folio: folio
+            Folio: folio,
+            Estado: "Confirmada",
+            Cliente: "Usuario Chatbot"
         });
 
-        const base = `Reserva confirmada. Auto: ${modelo}, fechas: ${fechaInicio} a ${fechaFin}, folio: ${folio}`;
-        const msg = await mejorarRespuesta(base, "confirmación");
+        const base = `¡Reserva confirmada con éxito! Auto: ${modelo}, Del: ${fechaInicio} al ${fechaFin}. Tu folio es: ${folio}.`;
+        const msg = await mejorarRespuesta(base, "confirmación de reserva exitosa");
 
         return res.json({ fulfillmentText: msg });
     }
 
     // ===============================
-    // ℹ️ INFO
+    // ℹ️ INFO REQUISITOS / PRECIOS
     // ===============================
     if (intent === "Info_Requisitos") {
-        return res.json({ fulfillmentText: await mejorarRespuesta(
-            "Necesitas INE, licencia y tarjeta de crédito.",
-            "requisitos"
-        )});
+        return res.json({ fulfillmentText: await mejorarRespuesta("Necesitas ser mayor de edad, INE, licencia vigente y tarjeta de crédito.", "requisitos de renta") });
     }
 
     if (intent === "Info_Precios_y_Disponibilidad") {
-        return res.json({ fulfillmentText: await mejorarRespuesta(
-            "Los precios empiezan desde $35 por día.",
-            "precios"
-        )});
+        return res.json({ fulfillmentText: await mejorarRespuesta("Los precios empiezan desde $35 por día dependiendo del modelo.", "información de precios") });
     }
 
     // ===============================
-    // 🤖 FALLBACK IA
+    // 🤖 FALLBACK IA (Para cualquier otra cosa)
     // ===============================
+    // Si el intent no coincide con ninguno de los anteriores, o es el "Default Fallback Intent", se envía a Mixtral
     const respuestaIA = await consultarGroq(queryText);
     return res.json({ fulfillmentText: respuestaIA });
 
 });
 
-app.listen(port, () => console.log("🚀 Webhook con IA listo"));
+app.listen(port, () => console.log("🚀 Webhook Híbrido (IA + Tarjetas visuales) activo en puerto", port));
