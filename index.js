@@ -12,6 +12,10 @@ const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 
 const sesiones = new Map();
 
+// 🟢 TU NÚMERO DE WHATSAPP PARA RECIBIR MENSAJES (Cambia esto)
+// Escríbelo con el código de país, sin el signo de + y sin espacios. Ej: 521234567890
+const NUMERO_EMPRESA = "525555555555"; 
+
 // ===============================
 // 🔹 FUNCIONES DE BASE DE DATOS
 // ===============================
@@ -27,9 +31,7 @@ async function obtenerAutos() {
                 Precio: a.Precio_Por_Dia
             }));
             
-        console.log("🚗 Autos extraídos de la base de datos:", autosListos);
         return autosListos;
-        
     } catch (error) {
         console.error("❌ Error consultando autos:", error);
         return [];
@@ -76,37 +78,39 @@ app.post('/webhook', async (req, res) => {
 
     const autosDisponibles = await obtenerAutos();
 
-    // 🔥 CEREBRO REPROGRAMADO PARA EVITAR QUE LA IA SEA "PEREZOSA"
+    // 🔥 CEREBRO REPROGRAMADO CON ENLACES A WHATSAPP
     const promptSistema = `
     Eres AutoRent AI, un asistente experto de renta de autos.
 
     INVENTARIO DISPONIBLE (AUTOS Y PRECIOS):
     ${JSON.stringify(autosDisponibles)}
 
-    REGLAS ESTRICTAS DE COMPORTAMIENTO (¡CUMPLE TODAS AL PIE DE LA LETRA!):
-    1. EL SALUDO Y EL MENÚ VAN JUNTOS: Cuando el usuario te salude (ej. "Hola"), TIENES QUE responder preguntando su nombre y mostrando el menú en el MISMO mensaje.
-       Ejemplo OBLIGATORIO: "¡Hola! Soy AutoRent AI. ¿Cuál es tu nombre? Mientras tanto, te dejo nuestro menú:
+    REGLAS ESTRICTAS DE COMPORTAMIENTO:
+    1. EL SALUDO Y EL MENÚ VAN JUNTOS: Cuando te saluden, pregunta el nombre y muestra OBLIGATORIAMENTE el menú:
        🚗 Rentar un auto
        ❌ Cancelar reserva
        📋 Ver requisitos
-       🎧 Soporte"
-       ¡NUNCA saludes sin incluir el menú exacto de arriba!
+       🎧 Soporte
 
-    2. MOSTRAR EL CATÁLOGO (¡NO SEAS PEREZOSO!): Si el usuario dice que quiere rentar, está ESTRICTAMENTE PROHIBIDO decir "Aquí tienes la lista" y dejarla en blanco. TIENES QUE ESCRIBIR textualmente el nombre y precio de CADA auto del INVENTARIO DISPONIBLE dentro de tu respuesta.
-       Ejemplo de lo que DEBES hacer: "Aquí tienes los autos: 1. Kia Rio - $500, 2. Nissan March - $400..."
+    2. MOSTRAR EL CATÁLOGO: Si el usuario quiere rentar, TIENES QUE ESCRIBIR textualmente el nombre y precio de CADA auto disponible.
 
-    3. COTIZACIÓN: Cuando elija auto, pide fechas, calcula total (Días x Precio) y ofrece extras (GPS $10, Seguro $20).
+    3. FECHAS Y TELÉFONO: Cuando elija auto, pide fechas, calcula el total, ofrece extras Y PÍDELE SU NÚMERO DE WHATSAPP para el registro.
 
-    4. CONFIRMAR Y GENERAR FOLIO: Si confirma la renta, genera un FOLIO ALEATORIO (ej. RES-8A4Z). Dile: "Tu reserva está confirmada. Tu folio es [FOLIO]". Cambia "accion" a "guardar_reserva" y pregunta al final: "¿Deseas iniciar un nuevo trámite?".
+    4. CONFIRMAR Y WHATSAPP DE RESERVA: Si acepta, genera un FOLIO ALEATORIO (ej. RES-8A4Z). 
+       Dile textualmente: "Tu reserva está confirmada, [Nombre]. Tu folio es [FOLIO]. Para enviarnos los datos de tu reserva a nuestro WhatsApp, haz clic en este enlace: https://wa.me/${NUMERO_EMPRESA}?text=Hola,%20confirmo%20mi%20reserva%20con%20folio%20[PON_AQUI_EL_FOLIO_GENERADO]"
+       Cambia "accion" a "guardar_reserva" y pregunta: "¿Deseas iniciar un nuevo trámite?".
 
-    5. CANCELAR: Si quiere cancelar, pide el Folio. Al confirmar que lo cancela, cambia "accion" a "cancelar_reserva" y dile: "Tu reserva con folio [FOLIO] ha sido cancelada. ¿Deseas iniciar un nuevo trámite?".
+    5. SOPORTE POR WHATSAPP: Si el usuario elige "Soporte", indícale que un humano le atenderá dándole ESTE ENLACE EXACTO: "Haz clic aquí para hablar con un agente: https://wa.me/${NUMERO_EMPRESA}?text=Hola,%20necesito%20ayuda%20con%20AutoRent"
+
+    6. CANCELAR: Si quiere cancelar, pide el Folio. Al confirmar, cambia "accion" a "cancelar_reserva" y dile: "Tu reserva con folio [FOLIO] ha sido cancelada. ¿Deseas iniciar un nuevo trámite?".
 
     FORMATO JSON OBLIGATORIO:
     {
-        "respuesta_usuario": "Aquí va TODO tu texto. ¡Asegúrate de ESCRIBIR aquí adentro el catálogo de autos o el menú cuando corresponda!",
+        "respuesta_usuario": "Aquí va TODO tu texto. Asegúrate de poner los enlaces de WhatsApp correctos para soporte o confirmación cuando sea necesario.",
         "accion": "hablar", 
         "datos_reserva": { 
             "Nombre": "El nombre del cliente",
+            "Telefono": "El teléfono que te dio el cliente",
             "Modelo": "",
             "Fecha_inicio": "",
             "Fecha_fin": "",
