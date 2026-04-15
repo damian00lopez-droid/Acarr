@@ -1,7 +1,8 @@
-      require('dotenv').config();
+require('dotenv').config();
 const express = require('express');
 const fetch = require('node-fetch');
 const Groq = require('groq-sdk');
+const nodemailer = require('nodemailer'); // NUEVO: Para enviar correos
 
 const app = express();
 app.use(express.json());
@@ -12,16 +13,70 @@ const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 
 const sesiones = new Map();
 
-// 🟢 TU NÚMERO DE WHATSAPP PARA RECIBIR MENSAJES (Cámbialo por el tuyo)
-const NUMERO_EMPRESA = "525555555555"; 
+// ===============================
+// 🔹 API DE WHATSAPP (ULTRAMSG)
+// ===============================
+async function enviarWhatsAppUltramsg(numero, mensaje) {
+    const instanceId = process.env.ULTRAMSG_INSTANCE_ID;
+    const token = process.env.ULTRAMSG_TOKEN;
+    
+    if (!instanceId || !token) {
+        console.log("⚠️ Faltan credenciales de UltraMsg. Simulando mensaje a", numero);
+        return;
+    }
+
+    const url = `https://api.ultramsg.com/${instanceId}/messages/chat`;
+    
+    // Limpiamos el número por si el usuario puso espacios o guiones
+    const numeroLimpio = numero.replace(/\D/g, ''); 
+
+    const params = new URLSearchParams();
+    params.append("token", token);
+    params.append("to", numeroLimpio);
+    params.append("body", mensaje);
+
+    try {
+        await fetch(url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: params
+        });
+        console.log(`✅ WhatsApp enviado a ${numeroLimpio} vía UltraMsg`);
+    } catch (error) {
+        console.error("❌ Error enviando WhatsApp UltraMsg:", error);
+    }
+}
 
 // ===============================
-// 🔹 FUNCIÓN PARA WHATSAPP AUTOMÁTICO
+// 🔹 API DE CORREO (NODEMAILER)
 // ===============================
-async function enviarWhatsAppAutomatico(numero, mensaje) {
-    const numeroLimpio = numero.replace(/\D/g, '');
-    console.log(`[WhatsApp API] Simulando envío automático a ${numeroLimpio}: ${mensaje}`);
-    // Aquí irá tu conexión a la API de Meta (WhatsApp) cuando decidas activarla
+async function enviarCorreoConfirmacion(correoDestino, asunto, texto) {
+    if (!process.env.SMTP_USER || !process.env.SMTP_PASS) {
+        console.log("⚠️ Faltan credenciales SMTP. Simulando correo a", correoDestino);
+        return;
+    }
+
+    let transporter = nodemailer.createTransport({
+        host: process.env.SMTP_HOST || "smtp.gmail.com",
+        port: process.env.SMTP_PORT || 587,
+        secure: false, // true para puerto 465, false para 587
+        auth: {
+            user: process.env.SMTP_USER,
+            pass: process.env.SMTP_PASS
+        }
+    });
+
+    try {
+        await transporter.sendMail({
+            from: `"AutoRent Reservas" <${process.env.SMTP_USER}>`,
+            to: correoDestino,
+            subject: asunto,
+            text: texto
+        });
+        console.log(`📧 Correo enviado exitosamente a ${correoDestino}`);
+    } catch (error) {
+        console.error("❌ Error enviando correo con Nodemailer:", error);
+    }
 }
 
 // ===============================
@@ -32,11 +87,16 @@ async function obtenerAutos() {
         const res = await fetch(sheetdbUrl);
         const data = await res.json();
         
+        // Ahora traemos más detalles para las preferencias e imágenes
         const autosListos = data
             .filter(a => a.Disponibilidad === 'Disponible')
             .map(a => ({
                 Vehiculo: `${a.Marca} ${a.Modelo}`,
-                Precio: a.Precio_Por_Dia
+                Precio: a.Precio_Por_Dia,
+                Puertas: a.Puertas || "4",
+                Asientos: a.Asientos || "5",
+                Transmision: a.Transmision || "Automatica",
+                Imagen: a.Imagen || "" // Link de la imagen para Telegram
             }));
             
         return autosListos;
@@ -54,7 +114,7 @@ async function guardarReserva(datos) {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ data: [datos] })
         });
-        console.log("✅ ¡Reserva guardada en el Excel!", datos);
+        console.log("✅ ¡Reserva guardada en el Excel!");
     } catch (error) {
         console.error("❌ Error guardando reserva:", error);
     }
@@ -75,51 +135,56 @@ async function cancelarReserva(folio) {
 }
 
 // ===============================
-// 🚀 WEBHOOK IA HÍBRIDO
+// 🚀 WEBHOOK IA AVANZADO
 // ===============================
 app.post('/webhook', async (req, res) => {
-    // Evitamos crasheos si la petición viene vacía
     const queryText = req.body.queryResult?.queryText || "";
     const sessionId = req.body.session;
-    const intentDetectado = req.body.queryResult?.intent?.displayName || "Desconocido";
-
-    console.log(`\n[Intent: ${intentDetectado}] | [Usuario] -> ${queryText}`);
+    
+    console.log(`\n[Usuario] -> ${queryText}`);
 
     const autosDisponibles = await obtenerAutos();
 
-    // 🔥 CEREBRO REPROGRAMADO (Con enlaces a WhatsApp)
+    // 🔥 CEREBRO REPROGRAMADO PARA FILTROS, DATOS OBLIGATORIOS Y TELEGRAM 🔥
     const promptSistema = `
     Eres AutoRent AI, un asistente experto de renta de autos.
 
-    INVENTARIO DISPONIBLE (AUTOS Y PRECIOS):
+    INVENTARIO DISPONIBLE (CON DETALLES E IMÁGENES):
     ${JSON.stringify(autosDisponibles)}
 
-    REGLAS ESTRICTAS DE COMPORTAMIENTO:
-    1. EL SALUDO Y EL MENÚ VAN JUNTOS: Cuando te saluden, pregunta el nombre y muestra OBLIGATORIAMENTE el menú:
-       🚗 Rentar un auto
-       ❌ Cancelar reserva
-       📋 Ver requisitos
-       🎧 Soporte
+    REGLAS ESTRICTAS DE FLUJO PASO A PASO (NO TE SALTES NINGUNO):
 
-    2. MOSTRAR EL CATÁLOGO: Si el usuario quiere rentar, TIENES QUE ESCRIBIR textualmente el nombre y precio de CADA auto disponible.
+    PASO 1 (RECOLECCIÓN OBLIGATORIA DE DATOS): 
+    Al iniciar la conversación, ESTÁ PROHIBIDO mostrar autos o cotizar. DEBES pedirle al usuario su Nombre, Correo Electrónico y Número de Teléfono (WhatsApp). 
+    No avances al Paso 2 hasta que tengas esos 3 datos completos.
 
-    3. FECHAS Y TELÉFONO: Cuando elija auto, pide fechas, calcula el total, ofrece extras Y PÍDELE SU NÚMERO DE WHATSAPP para el registro.
+    PASO 2 (PREFERENCIAS): 
+    Una vez que tengas su Nombre, Correo y Teléfono, pregúntale sus preferencias de viaje: ¿Cuántas puertas necesita?, ¿Cuántos asientos?, y ¿Qué transmisión prefiere (Automática o Manual)?.
 
-    4. CONFIRMAR Y WHATSAPP DE RESERVA: Si acepta, genera un FOLIO ALEATORIO (ej. RES-8A4Z). 
-       Dile textualmente: "Tu reserva está confirmada, [Nombre]. Tu folio es [FOLIO]. Para enviarnos los datos de tu reserva a nuestro WhatsApp, haz clic en este enlace: https://wa.me/${NUMERO_EMPRESA}?text=Hola,%20confirmo%20mi%20reserva%20con%20folio%20[PON_AQUI_EL_FOLIO_GENERADO]"
-       Cambia "accion" a "guardar_reserva" y pregunta: "¿Deseas iniciar un nuevo trámite?".
+    PASO 3 (MOSTRAR CATÁLOGO FILTRADO EN TELEGRAM): 
+    Basado en sus preferencias, recomiéndale los autos que coincidan. 
+    OBLIGATORIO: Cuando le describas un auto, dale la información completa (puertas, asientos, transmisión) y PON SIEMPRE LA URL DE LA IMAGEN en tu respuesta para que Telegram la pueda mostrar como vista previa. Ejemplo: "Te recomiendo el Nissan March ($400). Es automático, 5 asientos. Mira cómo luce: [URL_DE_LA_IMAGEN]".
 
-    5. SOPORTE POR WHATSAPP: Si el usuario elige "Soporte", indícale que un humano le atenderá dándole ESTE ENLACE EXACTO: "Haz clic aquí para hablar con un agente: https://wa.me/${NUMERO_EMPRESA}?text=Hola,%20necesito%20ayuda%20con%20AutoRent"
+    PASO 4 (COTIZACIÓN): 
+    Pide fechas de inicio y fin. Calcula el total. Ofrece GPS ($10) o Seguro ($20).
 
-    6. CANCELAR: Si quiere cancelar, pide el Folio. Al confirmar, cambia "accion" a "cancelar_reserva" y dile: "Tu reserva con folio [FOLIO] ha sido cancelada. ¿Deseas iniciar un nuevo trámite?".
+    PASO 5 (CONFIRMACIÓN): 
+    Si acepta, genera un FOLIO DINÁMICO único (Ej. RES-84K2P). 
+    Dile textualmente: "Tu reserva está confirmada, [Nombre]. Tu folio es [FOLIO]. Te enviaremos un correo y un WhatsApp con los detalles.". Cambia la "accion" a "guardar_reserva".
+
+    PASO 6 (CANCELAR RESERVA): 
+    Si pide cancelar, solicítale su Folio. Al confirmar, cambia la "accion" a "cancelar_reserva" y dile: "Tu reserva con folio [FOLIO] ha sido cancelada exitosamente.".
 
     FORMATO JSON OBLIGATORIO:
     {
-        "respuesta_usuario": "Aquí va TODO tu texto para el usuario.",
-        "accion": "hablar", 
+        "respuesta_usuario": "Tu mensaje de chat aquí. Recuerda incluir links de imágenes al mostrar autos.",
+        "accion": "hablar", // Cambia a "guardar_reserva" o "cancelar_reserva" al finalizar
+        "datos_cliente": {
+            "Nombre": "",
+            "Telefono": "",
+            "Correo": ""
+        },
         "datos_reserva": { 
-            "Nombre": "El nombre del cliente",
-            "Telefono": "El teléfono que te dio el cliente",
             "Modelo": "",
             "Fecha_inicio": "",
             "Fecha_fin": "",
@@ -137,8 +202,8 @@ app.post('/webhook', async (req, res) => {
     historial[0].content = promptSistema; 
     historial.push({ role: "user", content: queryText });
 
-    if (historial.length > 7) {
-        historial.splice(1, historial.length - 7);
+    if (historial.length > 8) {
+        historial.splice(1, historial.length - 8); // Damos un poco más de memoria para recolectar datos
     }
 
     try {
@@ -146,18 +211,17 @@ app.post('/webhook', async (req, res) => {
             messages: historial,
             model: "llama-3.1-8b-instant",
             response_format: { type: "json_object" },
-            temperature: 0.5 
+            temperature: 0.4 // Balance entre ser estricto siguiendo pasos y creativo con folios
         });
 
         let contenidoIA = respuestaGroq.choices[0].message.content;
         console.log(`[IA JSON Crudo] ->`, contenidoIA);
 
-        // 🔥 PARCHE DE LIMPIEZA JSON 🔥
+        // Limpieza de JSON
         contenidoIA = contenidoIA.replace(/```json/g, '').replace(/```/g, '').trim();
         const inicioJSON = contenidoIA.indexOf('{');
         const finJSON = contenidoIA.lastIndexOf('}') + 1;
         
-        // Seguro por si Groq se vuelve loco y no envía JSON
         if(inicioJSON === -1 || finJSON === 0) {
             throw new Error("No se pudo extraer JSON de la respuesta.");
         }
@@ -165,47 +229,45 @@ app.post('/webhook', async (req, res) => {
         const jsonLimpio = contenidoIA.substring(inicioJSON, finJSON);
         const iaJSON = JSON.parse(jsonLimpio);
         
-        // 🔥 INYECCIÓN DE SEGURIDAD (MENÚ Y AUTOS) 🔥
-        // Esto garantiza que el menú y los autos siempre se muestren, aunque la IA sea "perezosa"
-        if (intentDetectado === "Default Welcome Intent" || queryText.toLowerCase().includes('hola')) {
-            if (!iaJSON.respuesta_usuario.includes('Rentar')) {
-                iaJSON.respuesta_usuario += "\n\n¿En qué te puedo ayudar hoy?\n🚗 Rentar un auto\n❌ Cancelar reserva\n📋 Ver requisitos\n🎧 Soporte";
-            }
-        }
-        
-        if (queryText.toLowerCase().includes('rentar') || queryText.toLowerCase().includes('auto')) {
-             if (!iaJSON.respuesta_usuario.includes('$')) {
-                  iaJSON.respuesta_usuario += "\n\nAquí tienes nuestros autos disponibles:\n";
-                  autosDisponibles.forEach(a => {
-                      iaJSON.respuesta_usuario += `- ${a.Vehiculo}: $${a.Precio}\n`;
-                  });
-             }
-        }
-
         historial.push({ role: "assistant", content: jsonLimpio });
 
-        // EJECUTAR ACCIONES FINALES
+        const nombreCliente = iaJSON.datos_cliente?.Nombre || "Cliente";
+        const telefonoCliente = iaJSON.datos_cliente?.Telefono;
+        const correoCliente = iaJSON.datos_cliente?.Correo;
+
+        // EJECUTAR ACCIONES FINALES (RESERVAS Y CANCELACIONES)
         if (iaJSON.accion === "guardar_reserva") {
-            console.log("⏳ Mandando reserva a Google Sheets...");
+            console.log("⏳ Guardando reserva en SheetDB...");
             await guardarReserva({
+                Nombre: nombreCliente,
+                Telefono: telefonoCliente,
+                Correo: correoCliente,
                 ...iaJSON.datos_reserva,
                 Estado: "Confirmado" 
             });
-            if (iaJSON.datos_reserva.Telefono) {
-                await enviarWhatsAppAutomatico(
-                    iaJSON.datos_reserva.Telefono, 
-                    `¡Hola ${iaJSON.datos_reserva.Nombre}! Tu reserva está confirmada. Folio: ${iaJSON.datos_reserva.Folio}`
-                );
+
+            // 🟢 DISPARAR WHATSAPP (ULTRAMSG)
+            if (telefonoCliente) {
+                const msgWhatsapp = `🚗 *AutoRent* 🚗\n¡Hola ${nombreCliente}!\n\nTu reserva ha sido confirmada con éxito.\n*Modelo:* ${iaJSON.datos_reserva.Modelo}\n*Folio:* ${iaJSON.datos_reserva.Folio}\n*Fechas:* ${iaJSON.datos_reserva.Fecha_inicio} al ${iaJSON.datos_reserva.Fecha_fin}\n\n¡Gracias por elegirnos!`;
+                await enviarWhatsAppUltramsg(telefonoCliente, msgWhatsapp);
             }
+
+            // 🟢 DISPARAR CORREO (NODEMAILER)
+            if (correoCliente) {
+                const asuntoCorreo = `Confirmación de Reserva AutoRent - Folio ${iaJSON.datos_reserva.Folio}`;
+                const textoCorreo = `Hola ${nombreCliente},\n\nGracias por rentar con nosotros. Tu reserva del vehículo ${iaJSON.datos_reserva.Modelo} está confirmada.\n\nTus fechas son del ${iaJSON.datos_reserva.Fecha_inicio} al ${iaJSON.datos_reserva.Fecha_fin}.\nTu número de folio para cualquier aclaración es: ${iaJSON.datos_reserva.Folio}.\n\nSaludos,\nEl equipo de AutoRent`;
+                await enviarCorreoConfirmacion(correoCliente, asuntoCorreo, textoCorreo);
+            }
+
         } else if (iaJSON.accion === "cancelar_reserva") {
             console.log(`⏳ Cancelando reserva...`);
             const folioMayusculas = (iaJSON.datos_reserva.Folio || "").toUpperCase();
             await cancelarReserva(folioMayusculas);
-            if (iaJSON.datos_reserva.Telefono) {
-                await enviarWhatsAppAutomatico(
-                    iaJSON.datos_reserva.Telefono, 
-                    `¡Hola ${iaJSON.datos_reserva.Nombre}. Tu reserva con folio ${folioMayusculas} ha sido cancelada exitosamente.`
-                );
+
+            // 🟢 DISPARAR WHATSAPP DE CANCELACIÓN (ULTRAMSG)
+            if (telefonoCliente) {
+                const msgCancelacion = `🚫 *AutoRent* 🚫\nHola ${nombreCliente}. Te confirmamos que tu reserva con el folio ${folioMayusculas} ha sido cancelada exitosamente. Esperamos verte pronto.`;
+                await enviarWhatsAppUltramsg(telefonoCliente, msgCancelacion);
             }
         }
 
@@ -221,4 +283,4 @@ app.post('/webhook', async (req, res) => {
     }
 });
 
-app.listen(port, () => console.log("🚀 Webhook IA funcionando en puerto", port));
+app.listen(port, () => console.log("🚀 Webhook IA Avanzado funcionando en puerto", port));
