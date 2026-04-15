@@ -27,6 +27,7 @@ async function obtenerAutos() {
                 Precio: a.Precio_Por_Dia
             }));
             
+        console.log("🚗 Autos extraídos de la base de datos:", autosListos);
         return autosListos;
         
     } catch (error) {
@@ -75,31 +76,37 @@ app.post('/webhook', async (req, res) => {
 
     const autosDisponibles = await obtenerAutos();
 
-    // 🔥 CEREBRO REPROGRAMADO: Todo en un solo mensaje inicial
+    // 🔥 CEREBRO REPROGRAMADO PARA EVITAR QUE LA IA SEA "PEREZOSA"
     const promptSistema = `
     Eres AutoRent AI, un asistente experto de renta de autos.
 
-    INVENTARIO DISPONIBLE:
+    INVENTARIO DISPONIBLE (AUTOS Y PRECIOS):
     ${JSON.stringify(autosDisponibles)}
 
-    REGLAS ESTRICTAS DE FLUJO (CÚMPLELAS OBLIGATORIAMENTE):
-    1. SALUDO, NOMBRE Y MENÚ JUNTOS: Si el usuario saluda, preséntate, pregúntale su nombre Y EN ESE MISMO MENSAJE muéstrale este menú textualmente:
+    REGLAS ESTRICTAS DE COMPORTAMIENTO (¡CUMPLE TODAS AL PIE DE LA LETRA!):
+    1. EL SALUDO Y EL MENÚ VAN JUNTOS: Cuando el usuario te salude (ej. "Hola"), TIENES QUE responder preguntando su nombre y mostrando el menú en el MISMO mensaje.
+       Ejemplo OBLIGATORIO: "¡Hola! Soy AutoRent AI. ¿Cuál es tu nombre? Mientras tanto, te dejo nuestro menú:
        🚗 Rentar un auto
        ❌ Cancelar reserva
        📋 Ver requisitos
-       🎧 Soporte
-       (Ejemplo: "¡Hola! Soy AutoRent AI. Para darte un mejor servicio, ¿cuál es tu nombre? Mientras tanto, ¿en qué te puedo ayudar hoy? [MENÚ]")
-    2. MOSTRAR CATÁLOGO: Si el usuario quiere rentar, muéstrale la lista de autos con precios inmediatamente.
-    3. FECHAS Y EXTRAS: Pide fechas de inicio/fin. Calcula el total. Ofrece GPS ($10) o Seguro ($20). Usa siempre el nombre del cliente si ya te lo dio.
-    4. CONFIRMAR RENTA (FOLIO Y NUEVO TRÁMITE): Pídele que confirme. Si acepta, inventa un folio ALEATORIO combinando letras y números (ej. RES-9X4P). Dile textualmente: "Tu reserva está confirmada, [Nombre]. Tu folio es [FOLIO].". Cambia la "accion" a "guardar_reserva", y AL FINAL DEL MENSAJE pregunta: "¿Deseas iniciar un nuevo trámite?".
-    5. CANCELAR RESERVA: Si quiere cancelar, pide su Folio. Al confirmar, cambia la "accion" a "cancelar_reserva" y dile: "Tu reserva con folio [FOLIO] ha sido cancelada exitosamente. ¿Deseas iniciar un nuevo trámite?".
+       🎧 Soporte"
+       ¡NUNCA saludes sin incluir el menú exacto de arriba!
+
+    2. MOSTRAR EL CATÁLOGO (¡NO SEAS PEREZOSO!): Si el usuario dice que quiere rentar, está ESTRICTAMENTE PROHIBIDO decir "Aquí tienes la lista" y dejarla en blanco. TIENES QUE ESCRIBIR textualmente el nombre y precio de CADA auto del INVENTARIO DISPONIBLE dentro de tu respuesta.
+       Ejemplo de lo que DEBES hacer: "Aquí tienes los autos: 1. Kia Rio - $500, 2. Nissan March - $400..."
+
+    3. COTIZACIÓN: Cuando elija auto, pide fechas, calcula total (Días x Precio) y ofrece extras (GPS $10, Seguro $20).
+
+    4. CONFIRMAR Y GENERAR FOLIO: Si confirma la renta, genera un FOLIO ALEATORIO (ej. RES-8A4Z). Dile: "Tu reserva está confirmada. Tu folio es [FOLIO]". Cambia "accion" a "guardar_reserva" y pregunta al final: "¿Deseas iniciar un nuevo trámite?".
+
+    5. CANCELAR: Si quiere cancelar, pide el Folio. Al confirmar que lo cancela, cambia "accion" a "cancelar_reserva" y dile: "Tu reserva con folio [FOLIO] ha sido cancelada. ¿Deseas iniciar un nuevo trámite?".
 
     FORMATO JSON OBLIGATORIO:
     {
-        "respuesta_usuario": "Tu mensaje aquí.",
+        "respuesta_usuario": "Aquí va TODO tu texto. ¡Asegúrate de ESCRIBIR aquí adentro el catálogo de autos o el menú cuando corresponda!",
         "accion": "hablar", 
         "datos_reserva": { 
-            "Nombre": "Anota aquí el nombre real del cliente si ya lo mencionó",
+            "Nombre": "El nombre del cliente",
             "Modelo": "",
             "Fecha_inicio": "",
             "Fecha_fin": "",
@@ -126,13 +133,13 @@ app.post('/webhook', async (req, res) => {
             messages: historial,
             model: "llama-3.1-8b-instant",
             response_format: { type: "json_object" },
-            temperature: 0.5 // Temperatura en 0.5 para generar folios distintos
+            temperature: 0.5 
         });
 
         let contenidoIA = respuestaGroq.choices[0].message.content;
         console.log(`[IA Decidió] ->`, contenidoIA);
 
-        // Parche de seguridad JSON
+        // Limpieza de JSON
         contenidoIA = contenidoIA.replace(/```json/g, '').replace(/```/g, '').trim();
         const inicioJSON = contenidoIA.indexOf('{');
         const finJSON = contenidoIA.lastIndexOf('}') + 1;
