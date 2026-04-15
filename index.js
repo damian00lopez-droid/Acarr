@@ -19,7 +19,15 @@ async function obtenerAutos() {
     try {
         const res = await fetch(sheetdbUrl);
         const data = await res.json();
-        return data.filter(a => a.Disponibilidad === 'Disponible');
+        
+        // 🔥 OPTIMIZACIÓN DE TOKENS: 
+        // Filtramos y mapeamos SOLO lo esencial para no saturar a la IA
+        return data
+            .filter(a => a.Disponibilidad === 'Disponible')
+            .map(a => ({
+                Modelo: a.Modelo,
+                Precio: a.Precio_Por_Dia
+            }));
     } catch (error) {
         console.error("Error consultando SheetDB:", error);
         return [];
@@ -45,43 +53,30 @@ async function guardarReserva(datos) {
 app.post('/webhook', async (req, res) => {
     const queryText = req.body.queryResult.queryText;
     const sessionId = req.body.session;
-    // Extraemos el Intent que Dialogflow detectó para usarlo como pista
     const intentDetectado = req.body.queryResult.intent?.displayName || "Desconocido";
 
     console.log(`\n[Intent] -> ${intentDetectado} | [Usuario] -> ${queryText}`);
 
+    // Obtenemos el inventario "ligero"
     const autosDisponibles = await obtenerAutos();
 
-    // 2. Construir el Prompt del Sistema (Más amigable y estructurado)
     const promptSistema = `
-    Eres AutoRent AI, el asistente virtual más amable, empático y servicial para renta de autos.
-    Tu tono debe ser cálido, usar emojis de forma natural (sin exagerar) y hacer sentir al usuario muy bien atendido.
+    Eres AutoRent AI, un asistente amable de renta de autos.
+    PISTA: Dialogflow clasificó esto como "${intentDetectado}". Usa esto para guiarte.
 
-    PISTA DE CONTEXTO: Dialogflow clasificó la intención del usuario como "${intentDetectado}". Usa esto para guiar tu respuesta.
+    AUTOS DISPONIBLES: ${JSON.stringify(autosDisponibles)}
 
-    INVENTARIO ACTUAL:
-    ${JSON.stringify(autosDisponibles)}
+    REGLAS:
+    1. Si saludan (Default Welcome Intent): Saluda con entusiasmo y muestra opciones (Rentar, Requisitos, Soporte).
+    2. Si rentan: Pide fechas de inicio/fin. Multiplica los días por el Precio del auto.
+    3. Ofrece extras: GPS ($10 total) o Seguro ($20 total).
+    4. Confirmación: Genera un folio (ej. RES-1234), agradece y pon accion a "guardar_reserva".
 
-    REGLAS ESTRICTAS DE COMPORTAMIENTO:
-    1. SI EL USUARIO SALUDA O INICIA (Intent: Default Welcome Intent): Salúdalo con mucho entusiasmo y muéstrale este menú de opciones:
-       🚗 Rentar un vehículo
-       📋 Ver requisitos y seguros
-       ❌ Cancelar o consultar una reserva
-       🎧 Hablar con soporte
-
-    2. SI QUIERE RENTAR (Intent: Reserva o Cotizacion): Muestra SOLO los autos disponibles. Luego, pide amablemente las fechas de inicio y fin. Calcula el total multiplicando los días por el Precio_Por_Dia.
-    
-    3. EXTRAS: Antes de confirmar, siempre sugiere agregar GPS ($10 total) o Seguro Completo ($20 total).
-    
-    4. CONFIRMACIÓN: Cuando el usuario confirme la renta, inventa un folio (ej. RES-1234), agradécele y cambia la accion a "guardar_reserva".
-    
-    5. OTRAS DUDAS (Requisitos, Soporte, etc.): Responde de forma muy servicial basándote en la intención detectada. (Ej. Requisitos: INE, licencia, tarjeta).
-
-    FORMATO OBLIGATORIO (JSON):
+    RESPONDE SÓLO CON ESTE JSON ESTRICTO (sin usar etiquetas Markdown como \`\`\`json):
     {
-        "respuesta_usuario": "Tu mensaje amigable, humano y formateado aquí.",
-        "accion": "hablar", // Cambia a "guardar_reserva" SOLO al confirmar la renta
-        "datos_reserva": { // Llena esto SOLO si vas a guardar_reserva
+        "respuesta_usuario": "Tu mensaje aquí.",
+        "accion": "hablar", 
+        "datos_reserva": { 
             "Modelo": "",
             "Fecha_inicio": "",
             "Fecha_fin": "",
@@ -96,44 +91,57 @@ app.post('/webhook', async (req, res) => {
     }
     const historial = sesiones.get(sessionId);
 
-    // Mantenemos el prompt del sistema actualizado
+    // Actualizar el prompt del sistema
     historial[0].content = promptSistema; 
     historial.push({ role: "user", content: queryText });
+
+    // 🔥 OPTIMIZACIÓN DE MEMORIA 🔥
+    // Si el historial crece mucho, mantenemos solo el System Prompt (índice 0) y los últimos 6 mensajes
+    if (historial.length > 7) {
+        historial.splice(1, historial.length - 7);
+    }
 
     try {
         const respuestaGroq = await groq.chat.completions.create({
             messages: historial,
             model: "llama-3.1-8b-instant",
             response_format: { type: "json_object" },
-            temperature: 0.3 // Un poquito más de temperatura para que suene más natural y menos robot
+            temperature: 0.3
         });
 
-        const contenidoIA = respuestaGroq.choices[0].message.content;
-        const iaJSON = JSON.parse(contenidoIA);
+        let contenidoIA = respuestaGroq.choices[0].message.content;
+        console.log(`[IA JSON Crudo] ->`, contenidoIA);
 
-        historial.push({ role: "assistant", content: contenidoIA });
+        // 🔥 PARCHE DE LIMPIEZA JSON 🔥
+        // Quitamos basura que la IA pueda agregar por error
+        contenidoIA = contenidoIA.replace(/```json/g, '').replace(/```/g, '').trim();
+        const inicioJSON = contenidoIA.indexOf('{');
+        const finJSON = contenidoIA.lastIndexOf('}') + 1;
+        const jsonLimpio = contenidoIA.substring(inicioJSON, finJSON);
 
-        // Si la IA decide que ya se completó el flujo de reserva
+        const iaJSON = JSON.parse(jsonLimpio);
+
+        historial.push({ role: "assistant", content: jsonLimpio });
+
         if (iaJSON.accion === "guardar_reserva") {
             console.log("⏳ Guardando en base de datos...");
             await guardarReserva({
                 ...iaJSON.datos_reserva,
                 Estado: "Confirmado"
             });
-            sesiones.delete(sessionId); 
+            sesiones.delete(sessionId); // Limpiamos sesión al terminar la reserva
         }
 
-        // Devolvemos la respuesta amigable a Dialogflow
         return res.json({
             fulfillmentText: iaJSON.respuesta_usuario
         });
 
     } catch (error) {
-        console.error("❌ Error con Groq:", error);
+        console.error("❌ Error con Groq:", error.message || error);
         return res.json({
-            fulfillmentText: "¡Uy! 😅 Tuve un pequeño tropiezo técnico por un momento. ¿Podrías repetirme lo último que me dijiste, por favor?"
+            fulfillmentText: "¡Uy! 😅 Tuve un pequeño tropiezo procesando tanta información. ¿Podrías ser un poco más breve o repetirme lo último?"
         });
     }
 });
 
-app.listen(port, () => console.log("🚀 Webhook Híbrido funcionando en el puerto", port));
+app.listen(port, () => console.log("🚀 Webhook Híbrido Optimizado funcionando en puerto", port));
