@@ -14,7 +14,7 @@ const sesiones = new Map();
 
 // 🟢 TU NÚMERO DE WHATSAPP PARA RECIBIR MENSAJES (Cambia esto)
 // Escríbelo con el código de país, sin el signo de + y sin espacios. Ej: 521234567890
-const NUMERO_EMPRESA = "525555555555"; 
+const NUMERO_EMPRESA = "525573340394"; 
 
 // ===============================
 // 🔹 FUNCIONES DE BASE DE DATOS
