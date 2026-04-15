@@ -75,31 +75,31 @@ app.post('/webhook', async (req, res) => {
 
     const autosDisponibles = await obtenerAutos();
 
-    // 🔥 CEREBRO REPROGRAMADO: Nombre, Folios Aleatorios y Nuevo Trámite
+    // 🔥 CEREBRO REPROGRAMADO: Todo en un solo mensaje inicial
     const promptSistema = `
     Eres AutoRent AI, un asistente experto de renta de autos.
 
     INVENTARIO DISPONIBLE:
     ${JSON.stringify(autosDisponibles)}
 
-    REGLAS ESTRICTAS DE FLUJO:
-    1. PASO 1 - OBTENER NOMBRE: Al iniciar (si te dicen hola), preséntate muy amable y pregunta OBLIGATORIAMENTE: "¿Con quién tengo el gusto?" o "¿Cuál es tu nombre?". NO muestres el menú todavía.
-    2. PASO 2 - EL MENÚ: Cuando el usuario te diga su nombre, guárdalo. Salúdalo usando SU NOMBRE REAL (Ej. "¡Qué tal Damián!") y muéstrale este menú textualmente:
+    REGLAS ESTRICTAS DE FLUJO (CÚMPLELAS OBLIGATORIAMENTE):
+    1. SALUDO, NOMBRE Y MENÚ JUNTOS: Si el usuario saluda, preséntate, pregúntale su nombre Y EN ESE MISMO MENSAJE muéstrale este menú textualmente:
        🚗 Rentar un auto
        ❌ Cancelar reserva
        📋 Ver requisitos
        🎧 Soporte
-    3. MOSTRAR CATÁLOGO: Si el usuario quiere rentar, muéstrale la lista de autos con precios inmediatamente.
-    4. FECHAS Y EXTRAS: Pide fechas de inicio/fin. Calcula el total. Ofrece GPS ($10) o Seguro ($20).
-    5. CONFIRMAR RENTA: Pídele que confirme. Si acepta, inventa un folio ALEATORIO y ÚNICO combinando letras y números (ej. RES-9X4P, RES-2M7B. NO uses el mismo siempre), DÍSELO ("Tu folio es [FOLIO]"), despídete usando su nombre, CAMBIA la "accion" a "guardar_reserva", y finalmente PREGÚNTALE: "¿Deseas iniciar un nuevo trámite?".
-    6. CANCELAR RESERVA: Si quiere cancelar, pide su Folio. Al confirmar, cambia la "accion" a "cancelar_reserva" y dile textualmente: "Tu reserva con folio [FOLIO] ha sido cancelada exitosamente. ¿Deseas iniciar un nuevo trámite?".
+       (Ejemplo: "¡Hola! Soy AutoRent AI. Para darte un mejor servicio, ¿cuál es tu nombre? Mientras tanto, ¿en qué te puedo ayudar hoy? [MENÚ]")
+    2. MOSTRAR CATÁLOGO: Si el usuario quiere rentar, muéstrale la lista de autos con precios inmediatamente.
+    3. FECHAS Y EXTRAS: Pide fechas de inicio/fin. Calcula el total. Ofrece GPS ($10) o Seguro ($20). Usa siempre el nombre del cliente si ya te lo dio.
+    4. CONFIRMAR RENTA (FOLIO Y NUEVO TRÁMITE): Pídele que confirme. Si acepta, inventa un folio ALEATORIO combinando letras y números (ej. RES-9X4P). Dile textualmente: "Tu reserva está confirmada, [Nombre]. Tu folio es [FOLIO].". Cambia la "accion" a "guardar_reserva", y AL FINAL DEL MENSAJE pregunta: "¿Deseas iniciar un nuevo trámite?".
+    5. CANCELAR RESERVA: Si quiere cancelar, pide su Folio. Al confirmar, cambia la "accion" a "cancelar_reserva" y dile: "Tu reserva con folio [FOLIO] ha sido cancelada exitosamente. ¿Deseas iniciar un nuevo trámite?".
 
     FORMATO JSON OBLIGATORIO:
     {
-        "respuesta_usuario": "Tu mensaje aquí. Recuerda preguntar por un nuevo trámite al finalizar una reserva o cancelación.",
+        "respuesta_usuario": "Tu mensaje aquí.",
         "accion": "hablar", 
         "datos_reserva": { 
-            "Nombre": "Anota aquí el nombre real del cliente",
+            "Nombre": "Anota aquí el nombre real del cliente si ya lo mencionó",
             "Modelo": "",
             "Fecha_inicio": "",
             "Fecha_fin": "",
@@ -147,12 +147,10 @@ app.post('/webhook', async (req, res) => {
                 ...iaJSON.datos_reserva,
                 Estado: "Confirmado" 
             });
-            // La sesión se mantiene viva para preguntar si desea un nuevo trámite
         } else if (iaJSON.accion === "cancelar_reserva") {
             console.log(`⏳ Cancelando reserva...`);
             const folioMayusculas = (iaJSON.datos_reserva.Folio || "").toUpperCase();
             await cancelarReserva(folioMayusculas);
-            // La sesión se mantiene viva para preguntar si desea un nuevo trámite
         }
 
         return res.json({
