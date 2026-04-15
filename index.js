@@ -52,7 +52,6 @@ async function guardarReserva(datos) {
 
 async function cancelarReserva(folio) {
     try {
-        // En SheetDB, buscamos por la columna Folio y actualizamos su estado
         const urlDestino = `${sheetdbUrl}/Folio/${folio}?sheet=Reservas`;
         await fetch(urlDestino, {
             method: 'PATCH',
@@ -77,23 +76,28 @@ app.post('/webhook', async (req, res) => {
 
     const autosDisponibles = await obtenerAutos();
 
-    // 🔥 CEREBRO REPROGRAMADO
+    // 🔥 CEREBRO REPROGRAMADO (A PRUEBA DE FALLOS)
     const promptSistema = `
     Eres AutoRent AI, un asistente experto de renta de autos.
 
     INVENTARIO DE AUTOS DISPONIBLES:
     ${JSON.stringify(autosDisponibles)}
 
-    REGLAS ESTRICTAS DE FLUJO (SÍGUELAS PASO A PASO):
-    1. SALUDO, NOMBRE Y MENÚ: Si el usuario saluda, preséntate, pregúntale su NOMBRE y muéstrale OBLIGATORIAMENTE este menú: [🚗 Rentar un auto, ❌ Cancelar reserva, 📋 Ver requisitos, 🎧 Soporte].
-    2. MOSTRAR CATÁLOGO: Si el usuario quiere rentar, ES OBLIGATORIO que le escribas la lista completa del INVENTARIO DISPONIBLE con sus precios.
+    REGLAS ESTRICTAS DE FLUJO (SÍGUELAS PASO A PASO OBLIGATORIAMENTE):
+    1. SALUDO, NOMBRE Y MENÚ: Si el usuario saluda, preséntate, pregúntale su NOMBRE y copia y pega EXACTAMENTE este menú en tu respuesta:
+       "¿En qué te puedo ayudar hoy?
+       🚗 Rentar un auto
+       ❌ Cancelar reserva
+       📋 Ver requisitos
+       🎧 Soporte"
+    2. MOSTRAR CATÁLOGO: Si el usuario quiere rentar, ES OBLIGATORIO que le escribas la lista completa de autos disponibles con sus precios en ese mismo momento.
     3. FECHAS Y COTIZACIÓN: Cuando elija un auto, pide fechas de inicio y fin. Calcula el total (Días x Precio). Ofrécele GPS ($10) o Seguro ($20).
-    4. CONFIRMAR RENTA: Pídele que confirme. Si acepta, inventa un folio (ej. RES-5555), despídete llamándole por su nombre y cambia la "accion" a "guardar_reserva".
-    5. CANCELAR RESERVA: Si el usuario elige cancelar, pídele amablemente su número de Folio (ej. RES-1234). Cuando te lo dé y confirme que desea cancelar definitivamente, despídete lamentando que cancele, pon el folio en "datos_reserva.Folio" (en mayúsculas) y cambia la "accion" a "cancelar_reserva".
+    4. CONFIRMAR RENTA Y MOSTRAR FOLIO: Pídele que confirme. Si acepta, inventa un folio (ej. RES-5555), **DÍSELO CLARAMENTE EN TU MENSAJE ("Tu folio de reserva es: RES-5555. Por favor guárdalo")**, despídete por su nombre y cambia la "accion" a "guardar_reserva".
+    5. CANCELAR RESERVA: Si el usuario quiere cancelar, pídele su número de Folio. Cuando te lo dé y confirme, cambia la "accion" a "cancelar_reserva", pon el folio en "datos_reserva.Folio" y **DILE TEXTUALMENTE EN TU MENSAJE: "Tu reserva con folio [FOLIO] ha sido cancelada exitosamente."**
 
     FORMATO OBLIGATORIO (JSON ESTRICTO):
     {
-        "respuesta_usuario": "Tu mensaje detallado aquí.",
+        "respuesta_usuario": "Tu mensaje detallado aquí. RECUERDA: Si es saludo, incluye el menú exacto. Si es confirmación, muéstrale su FOLIO para que lo anote. Si es cancelación, dile que ha sido cancelada exitosamente.",
         "accion": "hablar", 
         "datos_reserva": { 
             "Nombre": "",
@@ -114,7 +118,6 @@ app.post('/webhook', async (req, res) => {
     historial[0].content = promptSistema; 
     historial.push({ role: "user", content: queryText });
 
-    // Limpiador de memoria para no saturar a la IA
     if (historial.length > 7) {
         historial.splice(1, historial.length - 7);
     }
@@ -130,7 +133,6 @@ app.post('/webhook', async (req, res) => {
         let contenidoIA = respuestaGroq.choices[0].message.content;
         console.log(`[IA Decidió] ->`, contenidoIA);
 
-        // Parche de limpieza JSON
         contenidoIA = contenidoIA.replace(/```json/g, '').replace(/```/g, '').trim();
         const inicioJSON = contenidoIA.indexOf('{');
         const finJSON = contenidoIA.lastIndexOf('}') + 1;
