@@ -34,14 +34,10 @@ async function enviarWhatsAppUltramsg(numero, mensaje) {
     params.append("body", mensaje);
 
     try {
-        await fetch(url, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-            body: params
-        });
-        console.log(`✅ WhatsApp enviado a ${numeroLimpio} vía UltraMsg`);
+        await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: params });
+        console.log(`✅ WhatsApp enviado a ${numeroLimpio}`);
     } catch (error) {
-        console.error("❌ Error enviando WhatsApp UltraMsg:", error);
+        console.error("❌ Error enviando WhatsApp:", error);
     }
 }
 
@@ -58,20 +54,12 @@ async function enviarCorreoConfirmacion(correoDestino, asunto, texto) {
         host: process.env.SMTP_HOST || "smtp.gmail.com",
         port: process.env.SMTP_PORT || 587,
         secure: false, 
-        auth: {
-            user: process.env.SMTP_USER,
-            pass: process.env.SMTP_PASS
-        }
+        auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS }
     });
 
     try {
-        await transporter.sendMail({
-            from: `"AutoRent Reservas" <${process.env.SMTP_USER}>`,
-            to: correoDestino,
-            subject: asunto,
-            text: texto
-        });
-        console.log(`📧 Correo enviado exitosamente a ${correoDestino}`);
+        await transporter.sendMail({ from: `"AutoRent" <${process.env.SMTP_USER}>`, to: correoDestino, subject: asunto, text: texto });
+        console.log(`📧 Correo enviado a ${correoDestino}`);
     } catch (error) {
         console.error("❌ Error enviando correo:", error);
     }
@@ -85,18 +73,14 @@ async function obtenerAutos() {
         const res = await fetch(sheetdbUrl);
         const data = await res.json();
         
-        const autosListos = data
-            .filter(a => a.Disponibilidad === 'Disponible')
-            .map(a => ({
-                Vehiculo: `${a.Marca} ${a.Modelo}`,
-                Precio: a.Precio_Por_Dia,
-                Puertas: a.Puertas || "4",
-                Asientos: a.Asientos || "5",
-                Transmision: a.Transmision || "Automatica",
-                Imagen: a.Imagen || "" 
-            }));
-            
-        return autosListos;
+        return data.filter(a => a.Disponibilidad === 'Disponible').map(a => ({
+            Vehiculo: `${a.Marca} ${a.Modelo}`,
+            Precio: a.Precio_Por_Dia,
+            Puertas: a.Puertas || "4",
+            Asientos: a.Asientos || "5",
+            Transmision: a.Transmision || "Automatica",
+            Imagen: a.Imagen || "" 
+        }));
     } catch (error) {
         console.error("❌ Error consultando autos:", error);
         return [];
@@ -106,33 +90,19 @@ async function obtenerAutos() {
 async function guardarReserva(datos) {
     try {
         const urlDestino = `${sheetdbUrl}?sheet=Reservas`;
-        await fetch(urlDestino, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ data: [datos] })
-        });
-        console.log("✅ ¡Reserva guardada en el Excel!");
-    } catch (error) {
-        console.error("❌ Error guardando reserva:", error);
-    }
+        await fetch(urlDestino, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ data: [datos] }) });
+    } catch (error) {}
 }
 
 async function cancelarReserva(folio) {
     try {
         const urlDestino = `${sheetdbUrl}/Folio/${folio}?sheet=Reservas`;
-        await fetch(urlDestino, {
-            method: 'PATCH',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ data: { Estado: "Cancelado" } }) 
-        });
-        console.log(`🚫 ¡Reserva ${folio} cancelada en el Excel!`);
-    } catch (error) {
-        console.error("❌ Error cancelando reserva:", error);
-    }
+        await fetch(urlDestino, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ data: { Estado: "Cancelado" } }) });
+    } catch (error) {}
 }
 
 // ===============================
-// 🚀 WEBHOOK IA DEFINITIVO
+// 🚀 WEBHOOK IA ULTRA-OPTIMIZADO
 // ===============================
 app.post('/webhook', async (req, res) => {
     const queryText = req.body.queryResult?.queryText || "";
@@ -141,42 +111,29 @@ app.post('/webhook', async (req, res) => {
     console.log(`\n[Usuario] -> ${queryText}`);
 
     const autosDisponibles = await obtenerAutos();
+    
+    // 🔥 REDUCCIÓN DE TOKENS: Hacemos un resumen muy cortito del inventario para la IA
+    const inventarioMini = autosDisponibles.map(a => `${a.Vehiculo} ($${a.Precio}) - ${a.Puertas}p, ${a.Asientos}a, ${a.Transmision}`).join(" | ");
 
-    // 🔥 CEREBRO ANTI-PEREZA Y OBLIGACIÓN DE FORMATO 🔥
+    // 🔥 CEREBRO COMPACTO 🔥
     const promptSistema = `
-    Eres AutoRent AI, un asistente experto de renta de autos.
+    Eres AutoRent AI.
+    Inventario disponible: ${inventarioMini}
 
-    INVENTARIO DISPONIBLE:
-    ${JSON.stringify(autosDisponibles)}
+    Reglas de flujo:
+    1. RECOLECCIÓN: Al saludar, pide Nombre, Correo y Teléfono (WhatsApp). NO avances hasta tener los 3.
+    2. PREFERENCIAS: Luego pregunta por preferencias: puertas, asientos y transmisión (Auto/Manual).
+    3. RECOMENDACIÓN: Sugiere autos que cumplan las preferencias. Menciónalos por su nombre (ej. "Te sugiero el Nissan March").
+    4. COTIZACIÓN: Pide fechas, calcula precio y ofrece extras.
+    5. RESERVA: Genera folio aleatorio (ej. RES-8X2). Cambia "accion" a "guardar_reserva".
+    6. CANCELAR: Pide folio, confirma y cambia "accion" a "cancelar_reserva".
 
-    REGLAS ESTRICTAS DE FLUJO PASO A PASO:
-    1. INICIO OBLIGATORIO: Pide Nombre, Correo y WhatsApp. No avances hasta tener los 3.
-    2. PREFERENCIAS: Pregunta cuántas puertas, asientos y transmisión busca.
-    3. MOSTRAR CATÁLOGO: Cuando te dé sus preferencias, busca en el inventario los autos que coincidan. 
-       ¡ATENCIÓN! Para mostrar los autos, DEBES llenar el arreglo "autos_recomendados" en tu respuesta JSON. NUNCA escribas la lista manualmente en el texto.
-    4. COTIZACIÓN: Pide fechas, calcula el total, ofrece extras.
-    5. CONFIRMACIÓN Y FOLIO: Genera un folio único (ej. RES-84K2P). Dile que su reserva está confirmada con ese folio y cambia "accion" a "guardar_reserva".
-    6. CANCELAR: Pide el folio, confirma y cambia "accion" a "cancelar_reserva".
-
-    FORMATO JSON OBLIGATORIO:
+    JSON OBLIGATORIO:
     {
-        "respuesta_usuario": "Tu mensaje. NUNCA escribas la lista de autos aquí, usa el arreglo de abajo.",
+        "respuesta_usuario": "Tu mensaje para el cliente.",
         "accion": "hablar", 
-        "autos_recomendados": [
-            { "Vehiculo": "Nombre del auto", "Precio": "Precio", "Puertas": "4", "Asientos": "5", "Transmision": "Auto", "Imagen": "URL de la imagen" }
-        ],
-        "datos_cliente": {
-            "Nombre": "",
-            "Telefono": "",
-            "Correo": ""
-        },
-        "datos_reserva": { 
-            "Modelo": "",
-            "Fecha_inicio": "",
-            "Fecha_fin": "",
-            "Extras": "",
-            "Folio": ""
-        }
+        "datos_cliente": { "Nombre": "", "Telefono": "", "Correo": "" },
+        "datos_reserva": { "Modelo": "", "Fecha_inicio": "", "Fecha_fin": "", "Extras": "", "Folio": "" }
     }
     `;
 
@@ -184,12 +141,12 @@ app.post('/webhook', async (req, res) => {
         sesiones.set(sessionId, [{ role: "system", content: promptSistema }]);
     }
     const historial = sesiones.get(sessionId);
-
     historial[0].content = promptSistema; 
     historial.push({ role: "user", content: queryText });
 
-    if (historial.length > 8) {
-        historial.splice(1, historial.length - 8); 
+    // 🔥 EVITAR ERROR 429: Borramos historial viejo, mantenemos solo los últimos 5 mensajes
+    if (historial.length > 5) {
+        historial.splice(1, historial.length - 5); 
     }
 
     try {
@@ -197,98 +154,88 @@ app.post('/webhook', async (req, res) => {
             messages: historial,
             model: "llama-3.1-8b-instant",
             response_format: { type: "json_object" },
-            temperature: 0.4 
+            temperature: 0.3 
         });
 
         let contenidoIA = respuestaGroq.choices[0].message.content;
-
-        // Limpieza de JSON
         contenidoIA = contenidoIA.replace(/```json/g, '').replace(/```/g, '').trim();
         const inicioJSON = contenidoIA.indexOf('{');
         const finJSON = contenidoIA.lastIndexOf('}') + 1;
         
-        if(inicioJSON === -1 || finJSON === 0) {
-            throw new Error("No se pudo extraer JSON de la respuesta.");
-        }
+        if(inicioJSON === -1 || finJSON === 0) throw new Error("No JSON");
 
         const jsonLimpio = contenidoIA.substring(inicioJSON, finJSON);
         const iaJSON = JSON.parse(jsonLimpio);
         
         // ========================================================
-        // 🛠️ PARCHES DE SEGURIDAD PARA CONSTRUIR TEXTO Y MENÚS
+        // 🛠️ INYECCIÓN MÁGICA DE IMÁGENES Y MENÚ (SIN GASTAR TOKENS)
         // ========================================================
+        let textoFinal = iaJSON.respuesta_usuario;
 
-        // 1. Si la IA recomendó autos, NOSOTROS armamos el texto con la imagen para Telegram
-        if (iaJSON.autos_recomendados && iaJSON.autos_recomendados.length > 0) {
-            let textoAutos = "\n\n🚗 *Opciones recomendadas para ti:*\n";
-            iaJSON.autos_recomendados.forEach(auto => {
-                textoAutos += `\n🔹 *${auto.Vehiculo}* - $${auto.Precio}/día\nDetalles: ${auto.Puertas} ptas, ${auto.Asientos} asient, ${auto.Transmision}\n📸 Foto: ${auto.Imagen || "Sin imagen disponible"}\n`;
+        // 1. Mostrar menú si dice hola o menú
+        const queryMin = queryText.toLowerCase();
+        if (queryMin.includes('hola') || queryMin.includes('menú') || queryMin.includes('menu')) {
+            textoFinal += "\n\n¿En qué te puedo ayudar hoy?\n🚗 Rentar un auto\n❌ Cancelar reserva\n📋 Ver requisitos\n🎧 Soporte";
+        }
+
+        // 2. Si la IA mencionó el nombre de algún auto, nosotros inyectamos la foto y detalles
+        let autosMencionados = autosDisponibles.filter(a => textoFinal.toLowerCase().includes(a.Vehiculo.toLowerCase()));
+        
+        // Si el cliente pide opciones y la IA le respondió recomendando autos...
+        if (autosMencionados.length > 0 && !queryMin.includes('confirm')) {
+            textoFinal += "\n\n🚗 *Aquí tienes los detalles de nuestras recomendaciones:*\n";
+            autosMencionados.forEach(auto => {
+                textoFinal += `\n🔹 *${auto.Vehiculo}* - $${auto.Precio}/día\nDetalles: ${auto.Puertas} ptas, ${auto.Asientos} asient, ${auto.Transmision}\n📸 Foto: ${auto.Imagen || "Sin imagen"}\n`;
             });
-            iaJSON.respuesta_usuario += textoAutos;
         }
 
-        // 2. Mostrar Menú inicial si es un saludo
-        const saludo = queryText.toLowerCase();
-        if (saludo.includes('hola') || saludo.includes('menu') || saludo.includes('menú')) {
-            if (!iaJSON.respuesta_usuario.includes('Rentar')) {
-                iaJSON.respuesta_usuario += "\n\n¿En qué te puedo ayudar hoy?\n🚗 Rentar un auto\n❌ Cancelar reserva\n📋 Ver requisitos\n🎧 Soporte";
-            }
-        }
-
-        // 3. Mostrar Menú al terminar una reserva o cancelación
+        // 3. Menú al terminar trámites
         if (iaJSON.accion === "guardar_reserva" || iaJSON.accion === "cancelar_reserva") {
-            iaJSON.respuesta_usuario += "\n\n¿Deseas iniciar un nuevo trámite?\n🚗 Rentar un auto\n❌ Cancelar reserva\n📋 Ver requisitos\n🎧 Soporte";
+            textoFinal += "\n\n¿Deseas iniciar un nuevo trámite?\n🚗 Rentar un auto\n❌ Cancelar reserva\n📋 Ver requisitos\n🎧 Soporte";
         }
 
+        // Guardamos en el historial lo que realmente dijimos
+        iaJSON.respuesta_usuario = textoFinal; 
         historial.push({ role: "assistant", content: JSON.stringify(iaJSON) });
 
+        // ========================================================
+        // EJECUTAR ACCIONES FINALES Y APIS
+        // ========================================================
         const nombreCliente = iaJSON.datos_cliente?.Nombre || "Cliente";
         const telefonoCliente = iaJSON.datos_cliente?.Telefono;
         const correoCliente = iaJSON.datos_cliente?.Correo;
 
-        // EJECUTAR ACCIONES FINALES
         if (iaJSON.accion === "guardar_reserva") {
-            console.log("⏳ Guardando reserva en SheetDB...");
-            await guardarReserva({
-                Nombre: nombreCliente,
-                Telefono: telefonoCliente,
-                Correo: correoCliente,
-                ...iaJSON.datos_reserva,
-                Estado: "Confirmado" 
-            });
+            console.log("⏳ Guardando reserva...");
+            await guardarReserva({ Nombre: nombreCliente, Telefono: telefonoCliente, Correo: correoCliente, ...iaJSON.datos_reserva, Estado: "Confirmado" });
 
             if (telefonoCliente) {
-                const msgWhatsapp = `🚗 *AutoRent* 🚗\n¡Hola ${nombreCliente}!\n\nTu reserva ha sido confirmada con éxito.\n*Modelo:* ${iaJSON.datos_reserva.Modelo}\n*Folio:* ${iaJSON.datos_reserva.Folio}\n*Fechas:* ${iaJSON.datos_reserva.Fecha_inicio} al ${iaJSON.datos_reserva.Fecha_fin}\n\n¡Gracias por elegirnos!`;
+                const msgWhatsapp = `🚗 *AutoRent* 🚗\n¡Hola ${nombreCliente}!\n\nReserva confirmada.\n*Modelo:* ${iaJSON.datos_reserva.Modelo}\n*Folio:* ${iaJSON.datos_reserva.Folio}\n*Fechas:* ${iaJSON.datos_reserva.Fecha_inicio} al ${iaJSON.datos_reserva.Fecha_fin}\n\n¡Gracias!`;
                 await enviarWhatsAppUltramsg(telefonoCliente, msgWhatsapp);
             }
-
             if (correoCliente) {
-                const asuntoCorreo = `Confirmación de Reserva AutoRent - Folio ${iaJSON.datos_reserva.Folio}`;
-                const textoCorreo = `Hola ${nombreCliente},\n\nGracias por rentar con nosotros. Tu reserva del vehículo ${iaJSON.datos_reserva.Modelo} está confirmada.\n\nTus fechas son del ${iaJSON.datos_reserva.Fecha_inicio} al ${iaJSON.datos_reserva.Fecha_fin}.\nTu número de folio para cualquier aclaración es: ${iaJSON.datos_reserva.Folio}.\n\nSaludos,\nEl equipo de AutoRent`;
+                const asuntoCorreo = `Reserva AutoRent - Folio ${iaJSON.datos_reserva.Folio}`;
+                const textoCorreo = `Hola ${nombreCliente},\n\nTu reserva del ${iaJSON.datos_reserva.Modelo} está confirmada.\nFechas: ${iaJSON.datos_reserva.Fecha_inicio} al ${iaJSON.datos_reserva.Fecha_fin}.\nFolio: ${iaJSON.datos_reserva.Folio}.\n\nSaludos.`;
                 await enviarCorreoConfirmacion(correoCliente, asuntoCorreo, textoCorreo);
             }
-
         } else if (iaJSON.accion === "cancelar_reserva") {
             console.log(`⏳ Cancelando reserva...`);
             const folioMayusculas = (iaJSON.datos_reserva.Folio || "").toUpperCase();
             await cancelarReserva(folioMayusculas);
 
             if (telefonoCliente) {
-                const msgCancelacion = `🚫 *AutoRent* 🚫\nHola ${nombreCliente}. Te confirmamos que tu reserva con el folio ${folioMayusculas} ha sido cancelada exitosamente. Esperamos verte pronto.`;
-                await enviarWhatsAppUltramsg(telefonoCliente, msgCancelacion);
+                await enviarWhatsAppUltramsg(telefonoCliente, `🚫 *AutoRent* 🚫\nHola ${nombreCliente}. Tu reserva folio ${folioMayusculas} ha sido cancelada exitosamente.`);
             }
         }
 
-        return res.json({
-            fulfillmentText: iaJSON.respuesta_usuario
-        });
+        return res.json({ fulfillmentText: textoFinal });
 
     } catch (error) {
-        console.error("❌ Error grave en webhook:", error.message || error);
+        console.error("❌ Error en webhook:", error.message || error);
         return res.json({
-            fulfillmentText: "¡Uy! 😅 Tuve un pequeñísimo tropiezo técnico. ¿Serías tan amable de repetirme lo último que dijiste?"
+            fulfillmentText: "¡Uy! 😅 Tuve un pequeñísimo tropiezo de conexión (Rate Limit). ¿Podrías repetirme lo último?"
         });
     }
 });
 
-app.listen(port, () => console.log("🚀 Webhook IA Avanzado funcionando en puerto", port));
+app.listen(port, () => console.log("🚀 Webhook IA Ultra-Optimizado funcionando en puerto", port));
