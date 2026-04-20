@@ -6,34 +6,35 @@ const nodemailer = require('nodemailer');
 
 const app = express();
 app.use(express.json());
+app.use(express.static('public')); // Servir archivos estáticos (catalogo.html)
 
 const port = process.env.PORT || 3000;
 const sheetdbUrl = process.env.SHEETDB_URL;
 
 // ===============================
-// 🔥 CONFIGURACIÓN MEJORADA
+// 🔥 CONFIGURACIÓN
 // ===============================
-const CATALOGO_URL = process.env.CATALOGO_URL || "https://tu-catalogo-autos.com/buscar";
-const MAX_HISTORIAL = 10; // Limitar historial para ahorrar tokens
+const CATALOGO_URL = process.env.CATALOGO_URL || "https://tu-app.onrender.com/catalogo.html";
+const MAX_HISTORIAL = 10;
 
-// Sistema de caché para autos (evita consultas repetidas a SheetDB)
+// Cache de autos
 let cacheAutos = {
     data: [],
     lastUpdate: null,
-    ttl: 5 * 60 * 1000 // 5 minutos
+    ttl: 5 * 60 * 1000
 };
 
 // ===============================
-// 🔥 VALIDACIÓN Y LIMPIEZA DE API KEY
+// 🔥 VALIDACIÓN API KEY GROQ
 // ===============================
 const RAW_KEY = process.env.GROQ_API_KEY || "";
 const CLEAN_KEY = RAW_KEY.trim();
 
 if (!CLEAN_KEY) {
-    console.error("❌ ERROR: No se encontró GROQ_API_KEY en las variables de entorno.");
-    process.exit(1); // Salir si no hay API key
+    console.error("❌ ERROR: No se encontró GROQ_API_KEY");
+    process.exit(1);
 } else {
-    console.log(`🔑 Groq Key cargada correctamente. Longitud: ${CLEAN_KEY.length} caracteres.`);
+    console.log(`🔑 Groq Key cargada. Longitud: ${CLEAN_KEY.length}`);
 }
 
 const groq = new Groq({ apiKey: CLEAN_KEY });
@@ -44,94 +45,99 @@ const sesiones = new Map();
 // ===============================
 async function obtenerAutos(forceRefresh = false) {
     try {
-        // Usar caché si está vigente
-        if (!forceRefresh && 
-            cacheAutos.data.length > 0 && 
-            cacheAutos.lastUpdate && 
+        if (!forceRefresh &&
+            cacheAutos.data.length > 0 &&
+            cacheAutos.lastUpdate &&
             (Date.now() - cacheAutos.lastUpdate) < cacheAutos.ttl) {
             console.log("📦 Usando autos desde caché");
             return cacheAutos.data;
         }
 
-        console.log("🔄 Consultando SheetDB para obtener autos...");
+        console.log("🔄 Consultando SheetDB...");
         const res = await fetch(sheetdbUrl);
-        
-        if (!res.ok) {
-            throw new Error(`SheetDB respondió con status ${res.status}`);
-        }
+        if (!res.ok) throw new Error(`SheetDB status ${res.status}`);
         
         const data = await res.json();
         const autosProcesados = data
             .filter(a => a.Disponibilidad === 'Disponible')
             .map(a => ({
-                id: a.ID || `${a.Marca}-${a.Modelo}`.toLowerCase().replace(/\s+/g, '-'),
+                id: a.ID_Auto || `${a.Marca}-${a.Modelo}`.toLowerCase().replace(/\s+/g, '-'),
                 marca: a.Marca,
                 modelo: a.Modelo,
                 vehiculo: `${a.Marca} ${a.Modelo}`,
                 precio: parseFloat(a.Precio_Por_Dia) || 0,
-                tipo: a.Tipo || "Sedan",
+                tipo: a.Categoria || "Sedan",
                 transmision: a.Transmision || "Automática",
-                año: a.Año || "2024",
-                pasajeros: a.Pasajeros || "5",
-                caracteristicas: a.Caracteristicas ? a.Caracteristicas.split(',') : []
+                puertas: a.Puertas || "4",
+                pasajeros: a.Asientos || "5",
+                imagen: a.Imagen || "",
+                año: a.Año || "2024"
             }));
 
-        // Actualizar caché
         cacheAutos = {
             data: autosProcesados,
             lastUpdate: Date.now(),
             ttl: cacheAutos.ttl
         };
 
-        console.log(`✅ ${autosProcesados.length} autos cargados en caché`);
+        console.log(`✅ ${autosProcesados.length} autos en caché`);
         return autosProcesados;
-        
     } catch (error) {
         console.error("❌ Error obteniendo autos:", error);
-        // Si hay error pero tenemos caché antigua, la usamos
-        if (cacheAutos.data.length > 0) {
-            console.log("⚠️ Usando caché antigua debido al error");
-            return cacheAutos.data;
-        }
-        return [];
+        return cacheAutos.data.length ? cacheAutos.data : [];
     }
 }
+
+// ===============================
+// 🔹 NUEVO ENDPOINT: API AUTOS (PARA CATÁLOGO)
+// ===============================
+app.get('/api/autos', async (req, res) => {
+    try {
+        const autos = await obtenerAutos();
+        let resultados = [...autos];
+        
+        // Aplicar filtros recibidos por query string
+        const { tipo, marca, transmision, precio_max, pasajeros } = req.query;
+        
+        if (tipo) resultados = resultados.filter(a => a.tipo.toLowerCase() === tipo.toLowerCase());
+        if (marca) resultados = resultados.filter(a => a.marca.toLowerCase() === marca.toLowerCase());
+        if (transmision) resultados = resultados.filter(a => a.transmision.toLowerCase() === transmision.toLowerCase());
+        if (precio_max) resultados = resultados.filter(a => a.precio <= parseFloat(precio_max));
+        if (pasajeros) resultados = resultados.filter(a => parseInt(a.pasajeros) >= parseInt(pasajeros));
+        
+        res.json(resultados);
+    } catch (error) {
+        console.error("Error en /api/autos:", error);
+        res.status(500).json({ error: "Error interno del servidor" });
+    }
+});
 
 // ===============================
 // 🔹 GENERADOR DE LINKS INTELIGENTES
 // ===============================
 function generarLinkCatalogo(preferencias = {}) {
     const params = new URLSearchParams();
-    
-    // Mapeo de preferencias a parámetros de URL
     if (preferencias.tipo) params.append('tipo', preferencias.tipo);
     if (preferencias.marca) params.append('marca', preferencias.marca);
     if (preferencias.transmision) params.append('transmision', preferencias.transmision);
     if (preferencias.precio_max) params.append('precio_max', preferencias.precio_max);
     if (preferencias.pasajeros) params.append('pasajeros', preferencias.pasajeros);
-    
-    // Añadir parámetro para tracking
     params.append('ref', 'chatbot');
-    params.append('session', Date.now());
     
     const queryString = params.toString();
     return queryString ? `${CATALOGO_URL}?${queryString}` : CATALOGO_URL;
 }
 
 // ===============================
-// 🔹 PROMPT DEL SISTEMA MEJORADO (CORREGIDO)
+// 🔹 PROMPT DEL SISTEMA (ESPAÑOL + MENÚ INICIAL)
 // ===============================
 function generarPromptSistema(autos) {
-    // Agrupar autos por categorías para el prompt
     const categorias = {};
     autos.forEach(auto => {
-        if (!categorias[auto.tipo]) {
-            categorias[auto.tipo] = [];
-        }
+        if (!categorias[auto.tipo]) categorias[auto.tipo] = [];
         categorias[auto.tipo].push(auto);
     });
 
-    // Crear resumen para el prompt (ahorramos tokens)
     const resumenAutos = Object.entries(categorias).map(([tipo, autosTipo]) => {
         const ejemplos = autosTipo.slice(0, 3).map(a => 
             `${a.marca} ${a.modelo} ($${a.precio}/día, ${a.transmision})`
@@ -139,48 +145,50 @@ function generarPromptSistema(autos) {
         return `- ${tipo}: ${autosTipo.length} disponibles. Ejemplos: ${ejemplos}${autosTipo.length > 3 ? ' y más...' : ''}`;
     }).join('\n');
 
-    return `Eres AutoRent Assistant, un asistente especializado en renta de autos. Tu objetivo es ayudar al cliente a encontrar el vehículo perfecto de manera eficiente y amigable.
+    return `Eres AutoRent Assistant, asistente de renta de autos. Tu objetivo es guiar al cliente de manera cálida y eficiente.
 
-🚗 **CATÁLOGO ACTUAL (${autos.length} vehículos disponibles):**
+🚗 **CATÁLOGO ACTUAL (${autos.length} vehículos):**
 ${resumenAutos}
 
+📌 **SALUDO INICIAL OBLIGATORIO** (cuando el usuario escribe por primera vez o después de finalizar una operación):
+Debes responder exactamente:
+"¡Bienvenido a AutoRent! 😊 Para continuar, necesito saber un poco más sobre ti. Por favor, proporciona tu **nombre completo**, **correo electrónico** y **número de WhatsApp** (10 dígitos).
+
+¿En qué te puedo ayudar hoy?
+1️⃣ Rentar un auto
+2️⃣ Cancelar reserva
+3️⃣ Ver requisitos
+4️⃣ Soporte"
+
+Si el usuario responde con "1" o "Rentar un auto", procede a preguntar qué tipo de vehículo necesita.
+Si responde "2" o "Cancelar reserva", solicita el folio o datos de la reserva para cancelar.
+Si responde "3" o "Ver requisitos", muestra los requisitos: identificación oficial vigente, licencia de conducir, tarjeta de crédito y ser mayor de 21 años.
+Si responde "4" o "Soporte", informa que un agente humano se comunicará en breve y pide confirmación del número de WhatsApp.
+
 📋 **PROTOCOLO DE ATENCIÓN:**
-1. **Saludo inicial**: Preséntate brevemente y pregunta qué tipo de vehículo busca el cliente.
-2. **Descubrimiento de necesidades**: Haz preguntas sobre:
-   - Tipo de uso (ciudad, viaje largo, familiar, lujo)
-   - Número de pasajeros
-   - Preferencia de transmisión (automática/manual)
-   - Presupuesto aproximado por día
-3. **Recomendación personalizada**: Basada en las respuestas, recomienda 2-3 opciones específicas.
-4. **Enlace al catálogo**: NUNCA envíes imágenes. En su lugar, genera un link personalizado usando esta estructura:
-   ${CATALOGO_URL}?tipo=TIPO&marca=MARCA&transmision=TIPO&precio_max=CANTIDAD
-   
-   Ejemplo de respuesta: "¡Excelente elección! Puedes ver todos nuestros vehículos del tipo que buscas aquí: [ENLACE]. Cuando hayas elegido, regresa y dime cuál te gustó para continuar con la reserva."
+1. **Recolección de datos personales**: Antes de iniciar cualquier trámite, asegúrate de tener nombre, correo y teléfono.
+2. **Recomendación**: Basada en preferencias, recomienda 2-3 opciones y proporciona el enlace al catálogo filtrado.
+3. **Enlace al catálogo**: Siempre usa la función generarLinkCatalogo(preferencias). El enlace debe llevar a ${CATALOGO_URL} con los filtros adecuados.
+4. **Reserva**: Una vez elegido el vehículo, solicita fechas de inicio y fin, calcula días y precio total, y confirma.
+5. **Cancelación**: Pide folio y simula la cancelación indicando que se ha procesado.
 
-5. **Proceso de reserva**: Una vez que el cliente elija un vehículo específico:
-   - Solicita: Nombre completo, Teléfono (10 dígitos), Correo electrónico
-   - Solicita: Fechas de renta (inicio y fin)
-   - Confirma los detalles antes de finalizar
-
-⚠️ **REGLAS IMPORTANTES:**
-- NO envíes imágenes ni archivos adjuntos
-- SIEMPRE proporciona el enlace al catálogo cuando el cliente pida ver opciones
-- El enlace DEBE incluir los filtros según las preferencias expresadas
-- Mantén un tono profesional pero amigable
-- Si el cliente pide algo fuera del alcance, indícalo amablemente
+⚠️ **REGLAS:**
+- NO envíes imágenes.
+- El enlace al catálogo debe aparecer cuando el cliente pida ver opciones.
+- Al finalizar cualquier operación (renta, cancelación, requisitos, soporte), pregunta: "¿Hay algo más en lo que pueda ayudarte?" y vuelve a mostrar el menú si el usuario desea continuar.
 
 📊 **FORMATO DE RESPUESTA JSON:**
 {
-  "respuesta_usuario": "Texto completo para el cliente (incluye el enlace si aplica)",
-  "accion": "hablar | recomendar | solicitar_datos | confirmar_reserva | guardar_reserva | cancelar",
+  "respuesta_usuario": "Texto para el cliente",
+  "accion": "hablar | recomendar | solicitar_datos | confirmar_reserva | guardar_reserva | cancelar | ver_requisitos | soporte",
   "preferencias_detectadas": {
-    "tipo": "string o null",
-    "marca": "string o null", 
-    "transmision": "string o null",
-    "precio_max": "número o null",
-    "pasajeros": "número o null"
+    "tipo": null,
+    "marca": null,
+    "transmision": null,
+    "precio_max": null,
+    "pasajeros": null
   },
-  "vehiculo_seleccionado": "string o null",
+  "vehiculo_seleccionado": null,
   "datos_cliente": {
     "nombre": "",
     "telefono": "",
@@ -197,235 +205,127 @@ ${resumenAutos}
 }
 
 // ===============================
-// 🔹 WHATSAPP (ULTRAMSG) - MEJORADO
+// 🔹 FUNCIONES DE ENVÍO (WhatsApp, Correo, SheetDB)
 // ===============================
 async function enviarWhatsAppUltramsg(numero, mensaje) {
     const instanceId = process.env.ULTRAMSG_INSTANCE_ID;
     const token = process.env.ULTRAMSG_TOKEN;
-
-    if (!instanceId || !token) {
-        console.warn("⚠️ ULTRAMSG no configurado");
-        return false;
-    }
+    if (!instanceId || !token) return false;
 
     try {
         const numeroLimpio = numero.replace(/\D/g, '');
-        
-        // Limitar longitud del mensaje para WhatsApp
-        const mensajeLimitado = mensaje.length > 1000 ? 
-            mensaje.substring(0, 997) + '...' : mensaje;
-        
         const url = `https://api.ultramsg.com/${instanceId}/messages/chat`;
-        const params = new URLSearchParams();
-        params.append("token", token);
-        params.append("to", numeroLimpio);
-        params.append("body", mensajeLimitado);
-        params.append("priority", "10"); // Prioridad normal
-
-        const response = await fetch(url, { 
-            method: 'POST', 
-            body: params,
-            timeout: 5000 // 5 segundos timeout
+        const params = new URLSearchParams({
+            token, to: numeroLimpio, body: mensaje, priority: "10"
         });
-        
-        if (response.ok) {
-            console.log(`✅ WhatsApp enviado a ${numeroLimpio}`);
-            return true;
-        } else {
-            console.error(`❌ Error WhatsApp: ${response.status}`);
-            return false;
-        }
+        const response = await fetch(url, { method: 'POST', body: params });
+        return response.ok;
     } catch (error) {
-        console.error("❌ Error enviando WhatsApp:", error.message);
+        console.error("Error WhatsApp:", error);
         return false;
     }
 }
 
-// ===============================
-// 🔹 CORREO (NODEMAILER) - MEJORADO
-// ===============================
 async function enviarCorreoConfirmacion(correoDestino, datosReserva, datosCliente) {
-    if (!process.env.SMTP_USER || !process.env.SMTP_PASS) {
-        console.warn("⚠️ SMTP no configurado");
-        return false;
-    }
-
+    if (!process.env.SMTP_USER) return false;
     try {
-        const asunto = `✅ Confirmación de Reserva - ${datosReserva.vehiculo}`;
-        
-        const texto = `
-¡Hola ${datosCliente.nombre}!
-
-Tu reserva ha sido confirmada exitosamente:
-
-🚗 Vehículo: ${datosReserva.vehiculo}
-📅 Fecha inicio: ${datosReserva.fecha_inicio}
-📅 Fecha fin: ${datosReserva.fecha_fin}
-⏱️ Total días: ${datosReserva.dias}
-💰 Precio total: $${datosReserva.precio_total} MXN
-
-📍 Recoge tu vehículo en nuestra sucursal presentando tu identificación oficial.
-
-Si necesitas modificar tu reserva, contáctanos al menos 24 horas antes.
-
-¡Gracias por elegir AutoRent!
-
----
-Este es un correo automático, por favor no responder.
-        `.trim();
-
         let transporter = nodemailer.createTransport({
             host: process.env.SMTP_HOST || "smtp.gmail.com",
             port: parseInt(process.env.SMTP_PORT) || 587,
             secure: false,
-            auth: {
-                user: process.env.SMTP_USER,
-                pass: process.env.SMTP_PASS
-            },
-            tls: {
-                rejectUnauthorized: false
-            }
+            auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS }
         });
-
         await transporter.sendMail({
             from: `"AutoRent" <${process.env.SMTP_USER}>`,
             to: correoDestino,
-            subject: asunto,
-            text: texto,
-            html: texto.replace(/\n/g, '<br>') // Versión HTML simple
+            subject: `✅ Confirmación de Reserva - ${datosReserva.vehiculo}`,
+            text: `Hola ${datosCliente.nombre},\n\nTu reserva ha sido confirmada:\nVehículo: ${datosReserva.vehiculo}\nFechas: ${datosReserva.fecha_inicio} al ${datosReserva.fecha_fin}\nTotal: $${datosReserva.precio_total}\n\nGracias por elegir AutoRent.`
         });
-        
-        console.log(`📧 Correo enviado a ${correoDestino}`);
         return true;
     } catch (error) {
-        console.error("❌ Error enviando correo:", error.message);
+        console.error("Error correo:", error);
         return false;
     }
 }
 
-// ===============================
-// 🔹 BASE DE DATOS (SHEETDB) - MEJORADO
-// ===============================
 async function guardarReserva(datosCliente, datosReserva) {
     try {
         const registro = {
-            Fecha_Reserva: new Date().toISOString().split('T')[0],
-            Hora_Reserva: new Date().toTimeString().split(' ')[0],
-            Nombre_Cliente: datosCliente.nombre,
-            Telefono_Cliente: datosCliente.telefono,
-            Correo_Cliente: datosCliente.correo,
-            Vehiculo: datosReserva.vehiculo,
-            Fecha_Inicio: datosReserva.fecha_inicio,
-            Fecha_Fin: datosReserva.fecha_fin,
-            Dias_Total: datosReserva.dias,
-            Precio_Total: datosReserva.precio_total,
-            Estado: 'Confirmada',
-            Origen: 'Chatbot',
-            Folio: `AR-${Date.now().toString(36).toUpperCase()}`
+            Folio: `AR-${Date.now().toString(36).toUpperCase()}`,
+            Nombre: datosCliente.nombre,
+            Telefono: datosCliente.telefono,
+            Email: datosCliente.correo,
+            Modelo: datosReserva.vehiculo,
+            Fecha_inicio: datosReserva.fecha_inicio,
+            Fecha_fin: datosReserva.fecha_fin,
+            Estado: 'Confirmada'
         };
-
         const response = await fetch(`${sheetdbUrl}?sheet=Reservas`, {
             method: 'POST',
-            headers: { 
-                'Content-Type': 'application/json',
-                'Accept': 'application/json'
-            },
+            headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ data: [registro] })
         });
-
-        if (!response.ok) {
-            throw new Error(`SheetDB error: ${response.status}`);
-        }
-
-        console.log(`✅ Reserva guardada - Folio: ${registro.Folio}`);
+        if (!response.ok) throw new Error("Error SheetDB");
         return registro.Folio;
     } catch (error) {
-        console.error("❌ Error guardando reserva:", error.message);
+        console.error("Error guardar reserva:", error);
         return null;
     }
 }
 
 // ===============================
-// 🔹 VALIDADORES
-// ===============================
-function validarTelefono(telefono) {
-    const limpio = telefono.replace(/\D/g, '');
-    return limpio.length >= 10 && limpio.length <= 15;
-}
-
-function validarCorreo(correo) {
-    const regex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    return regex.test(correo);
-}
-
-function validarFechas(fechaInicio, fechaFin) {
-    try {
-        const inicio = new Date(fechaInicio);
-        const fin = new Date(fechaFin);
-        const hoy = new Date();
-        hoy.setHours(0, 0, 0, 0);
-        
-        return inicio >= hoy && fin > inicio;
-    } catch {
-        return false;
-    }
-}
-
-// ===============================
-// 🔹 GESTIÓN DE SESIONES MEJORADA
+// 🔹 GESTIÓN DE SESIONES
 // ===============================
 function gestionarSesion(sessionId, promptSistema) {
     if (!sesiones.has(sessionId)) {
         sesiones.set(sessionId, []);
     }
-    
     let historial = sesiones.get(sessionId);
-    
-    // Actualizar o agregar mensaje del sistema
     if (historial.length === 0 || historial[0].role !== "system") {
         historial.unshift({ role: "system", content: promptSistema });
     } else {
         historial[0].content = promptSistema;
     }
-    
-    // Limitar historial para no exceder tokens
     if (historial.length > MAX_HISTORIAL) {
-        // Mantener el mensaje del sistema y los últimos mensajes
-        const mensajeSistema = historial[0];
-        historial = [mensajeSistema, ...historial.slice(-MAX_HISTORIAL + 1)];
+        const sysMsg = historial[0];
+        historial = [sysMsg, ...historial.slice(-MAX_HISTORIAL + 1)];
         sesiones.set(sessionId, historial);
     }
-    
     return historial;
 }
 
 // ===============================
-// 🚀 WEBHOOK PRINCIPAL - MEJORADO
+// 🚀 WEBHOOK PRINCIPAL (Dialogflow)
 // ===============================
 app.post('/webhook', async (req, res) => {
-    console.log("📨 Webhook recibido:", new Date().toISOString());
-    
+    console.log("📨 Webhook recibido");
     try {
         const queryText = req.body.queryResult?.queryText || "";
-        const sessionId = req.body.session || req.body.sessionId || "default";
+        const sessionId = req.body.session || "default";
         
-        // Obtener autos (con caché)
         const autos = await obtenerAutos();
-        
         if (autos.length === 0) {
-            return res.json({
-                fulfillmentText: "Lo siento, en este momento no puedo acceder al catálogo de vehículos. Por favor, intenta más tarde o contáctanos por teléfono."
-            });
+            return res.json({ fulfillmentText: "Catálogo no disponible. Intenta más tarde." });
         }
 
-        // Generar prompt actualizado
         const promptSistema = generarPromptSistema(autos);
-        
-        // Gestionar historial
         const historial = gestionarSesion(sessionId, promptSistema);
+        
+        // Detectar si es primera interacción (historial solo tiene system)
+        if (historial.length === 1) {
+            const bienvenida = `¡Bienvenido a AutoRent! 😊 Para continuar, necesito saber un poco más sobre ti. Por favor, proporciona tu **nombre completo**, **correo electrónico** y **número de WhatsApp** (10 dígitos).
+
+¿En qué te puedo ayudar hoy?
+1️⃣ Rentar un auto
+2️⃣ Cancelar reserva
+3️⃣ Ver requisitos
+4️⃣ Soporte`;
+            historial.push({ role: "assistant", content: JSON.stringify({ respuesta_usuario: bienvenida, accion: "hablar" }) });
+            return res.json({ fulfillmentText: bienvenida });
+        }
+        
         historial.push({ role: "user", content: queryText });
 
-        // Llamar a Groq
         const completion = await groq.chat.completions.create({
             messages: historial,
             model: "llama-3.1-8b-instant",
@@ -436,123 +336,65 @@ app.post('/webhook', async (req, res) => {
 
         let respuestaIA;
         try {
-            const content = completion.choices[0].message.content.trim();
-            respuestaIA = JSON.parse(content);
-        } catch (parseError) {
-            console.error("❌ Error parseando JSON de Groq:", parseError);
-            respuestaIA = {
-                respuesta_usuario: "Entendido. ¿Podrías darme más detalles sobre qué tipo de vehículo buscas?",
-                accion: "hablar",
-                preferencias_detectadas: {}
-            };
+            respuestaIA = JSON.parse(completion.choices[0].message.content);
+        } catch {
+            respuestaIA = { respuesta_usuario: "No entendí bien. ¿Podrías repetir?", accion: "hablar" };
         }
 
-        // Procesar acciones
         let respuestaFinal = respuestaIA.respuesta_usuario;
-        
-        // Si es recomendación, generar link personalizado
-        if (respuestaIA.accion === "recomendar" && respuestaIA.preferencias_detectadas) {
-            const linkCatalogo = generarLinkCatalogo(respuestaIA.preferencias_detectadas);
-            respuestaFinal = respuestaFinal.replace('[ENLACE]', linkCatalogo);
-            
-            // Asegurar que el link esté presente
-            if (!respuestaFinal.includes(CATALOGO_URL)) {
-                respuestaFinal += `\n\n🔗 Puedes ver el catálogo filtrado aquí: ${linkCatalogo}`;
-            }
+
+        // Manejar acciones específicas del menú
+        if (respuestaIA.accion === "recomendar") {
+            const link = generarLinkCatalogo(respuestaIA.preferencias_detectadas || {});
+            respuestaFinal = respuestaFinal.replace('[ENLACE]', link);
         }
         
-        // Procesar reserva
         if (respuestaIA.accion === "guardar_reserva") {
             const { datos_cliente, datos_reserva } = respuestaIA;
-            
-            // Validaciones
-            if (!validarTelefono(datos_cliente.telefono)) {
-                respuestaFinal = "El número de teléfono no parece válido. Por favor, proporciónalo nuevamente (10 dígitos).";
-            } else if (!validarCorreo(datos_cliente.correo)) {
-                respuestaFinal = "El correo electrónico no parece válido. Por favor, verifícalo.";
-            } else if (!validarFechas(datos_reserva.fecha_inicio, datos_reserva.fecha_fin)) {
-                respuestaFinal = "Las fechas no son válidas. La fecha de inicio debe ser hoy o posterior, y la fecha de fin debe ser posterior al inicio.";
+            const folio = await guardarReserva(datos_cliente, datos_reserva);
+            if (folio) {
+                const mensajeWpp = `✅ Reserva confirmada ${datos_cliente.nombre}\n🚗 ${datos_reserva.vehiculo}\n📅 ${datos_reserva.fecha_inicio} - ${datos_reserva.fecha_fin}\n💰 Total: $${datos_reserva.precio_total}\n📋 Folio: ${folio}`;
+                await enviarWhatsAppUltramsg(datos_cliente.telefono, mensajeWpp);
+                await enviarCorreoConfirmacion(datos_cliente.correo, datos_reserva, datos_cliente);
+                respuestaFinal = `✅ ¡Reserva confirmada!\n${mensajeWpp}\n\nTe hemos enviado los detalles por WhatsApp y correo. ¿Hay algo más en lo que pueda ayudarte?`;
             } else {
-                // Guardar reserva
-                const folio = await guardarReserva(datos_cliente, datos_reserva);
-                
-                if (folio) {
-                    // Notificaciones
-                    const mensajeWpp = `✅ ¡Reserva confirmada ${datos_cliente.nombre}!\n🚗 ${datos_reserva.vehiculo}\n📅 ${datos_reserva.fecha_inicio} al ${datos_reserva.fecha_fin}\n💰 Total: $${datos_reserva.precio_total}\n📋 Folio: ${folio}`;
-                    
-                    await enviarWhatsAppUltramsg(datos_cliente.telefono, mensajeWpp);
-                    await enviarCorreoConfirmacion(datos_cliente.correo, datos_reserva, datos_cliente);
-                    
-                    respuestaFinal = `✅ ¡Reserva confirmada!\n\n${mensajeWpp}\n\nTe hemos enviado los detalles por WhatsApp y correo electrónico. ¡Gracias por elegir AutoRent!`;
-                } else {
-                    respuestaFinal = "Hubo un problema al guardar tu reserva. Por favor, intenta nuevamente en unos minutos.";
-                }
+                respuestaFinal = "Hubo un problema al guardar la reserva. Intenta de nuevo.";
             }
         }
 
-        // Guardar respuesta en historial
-        historial.push({ 
-            role: "assistant", 
-            content: JSON.stringify(respuestaIA) 
-        });
+        if (respuestaIA.accion === "cancelar") {
+            respuestaFinal = "🔁 He procesado tu solicitud de cancelación. Si tenías una reserva activa, ha sido cancelada. ¿Necesitas algo más?";
+        }
 
-        // Responder a Dialogflow
-        res.json({
-            fulfillmentMessages: [
-                {
-                    text: {
-                        text: [respuestaFinal]
-                    }
-                }
-            ]
-        });
+        if (respuestaIA.accion === "ver_requisitos") {
+            respuestaFinal = "📋 **Requisitos para rentar:**\n- Identificación oficial vigente\n- Licencia de conducir vigente\n- Tarjeta de crédito para garantía\n- Ser mayor de 21 años\n\n¿Te gustaría continuar con una renta?";
+        }
 
-        console.log(`✅ Respuesta enviada - Sesión: ${sessionId}`);
+        if (respuestaIA.accion === "soporte") {
+            respuestaFinal = "🎧 Un agente de soporte se comunicará contigo a la brevedad al número de WhatsApp que proporcionaste. Gracias por tu paciencia. ¿Puedo ayudarte en algo más mientras tanto?";
+        }
+
+        historial.push({ role: "assistant", content: JSON.stringify(respuestaIA) });
+        res.json({ fulfillmentText: respuestaFinal });
 
     } catch (error) {
-        console.error("❌ ERROR CRÍTICO EN WEBHOOK:", error);
-        res.json({
-            fulfillmentText: "Lo siento, hubo un error inesperado. Por favor, intenta de nuevo en unos momentos."
-        });
+        console.error("❌ Error en webhook:", error);
+        res.json({ fulfillmentText: "Error interno. Por favor intenta más tarde." });
     }
 });
 
 // ===============================
-// 🔹 ENDPOINT DE SALUD
+// 🔹 HEALTH CHECK
 // ===============================
 app.get('/health', (req, res) => {
-    res.json({
-        status: 'OK',
-        timestamp: new Date().toISOString(),
-        sesionesActivas: sesiones.size,
-        autosEnCache: cacheAutos.data.length
-    });
+    res.json({ status: 'OK', timestamp: new Date().toISOString(), sesiones: sesiones.size, cache: cacheAutos.data.length });
 });
 
 // ===============================
 // 🚀 INICIAR SERVIDOR
 // ===============================
 app.listen(port, () => {
-    console.log(`
-╔════════════════════════════════════════╗
-║     🚗 AutoRent Chatbot API v2.0      ║
-╠════════════════════════════════════════╣
-║  Puerto: ${port}                         ║
-║  Entorno: ${process.env.NODE_ENV || 'development'}                ║
-║  Catálogo: ${CATALOGO_URL}
-╠════════════════════════════════════════╣
-║  Endpoints:                            ║
-║  - POST /webhook    (Dialogflow)       ║
-║  - GET  /health     (Monitor)          ║
-╚════════════════════════════════════════╝
-    `);
-});
-
-// Manejo de errores no capturados
-process.on('uncaughtException', (error) => {
-    console.error('❌ Error no capturado:', error);
-});
-
-process.on('unhandledRejection', (error) => {
-    console.error('❌ Promesa rechazada no manejada:', error);
+    console.log(`\n🚗 AutoRent AI v3.0 corriendo en puerto ${port}`);
+    console.log(`   Catálogo: ${CATALOGO_URL}`);
+    console.log(`   API Autos: /api/autos\n`);
 });
