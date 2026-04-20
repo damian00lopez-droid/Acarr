@@ -14,11 +14,8 @@ const sheetdbUrl = process.env.SHEETDB_URL;
 // 🔥 CONFIGURACIÓN
 // ===============================
 const CATALOGO_URL = "https://acarr-v3a2.onrender.com/catalogo.html";
-const MAX_HISTORIAL = 10; // Aumentamos un poco para no olvidar los datos del usuario
+const MAX_HISTORIAL = 12; // Aumentado para que no olvide los datos del cliente
 
-// ===============================
-// 🔥 VALIDACIÓN API KEY GROQ
-// ===============================
 const RAW_KEY = process.env.GROQ_API_KEY || "";
 const CLEAN_KEY = RAW_KEY.trim();
 
@@ -37,7 +34,7 @@ let cacheAutos = {
 };
 
 // ===============================
-// 🔹 CACHÉ DE AUTOS
+// 🔹 FUNCIONES DE BASE DE DATOS
 // ===============================
 async function obtenerAutos() {
     try {
@@ -68,6 +65,43 @@ async function obtenerAutos() {
     }
 }
 
+async function guardarReservaEnExcel(cliente, reserva) {
+    try {
+        // Generamos un folio único
+        const folio = `AR-${Date.now().toString(36).toUpperCase()}`;
+        
+        // Estructura de columnas que debe coincidir con tu Excel/SheetDB
+        const registro = {
+            Folio: folio,
+            Fecha_Registro: new Date().toISOString().split('T')[0],
+            Nombre_Cliente: cliente.nombre,
+            Telefono: cliente.telefono,
+            Correo: cliente.correo,
+            Vehiculo_Elegido: reserva.vehiculo,
+            Fecha_Inicio: reserva.fecha_inicio,
+            Fecha_Fin: reserva.fecha_fin,
+            Estado: 'Confirmada'
+        };
+
+        // Asumiendo que guardas en una pestaña llamada "Reservas". 
+        // Si no tienes pestañas, quita "?sheet=Reservas"
+        const res = await fetch(`${sheetdbUrl}?sheet=Reservas`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ data: [registro] })
+        });
+
+        if (res.ok) {
+            console.log(`✅ Reserva guardada en Excel con Folio: ${folio}`);
+            return folio;
+        }
+        return null;
+    } catch (error) {
+        console.error("❌ Error guardando en Excel:", error);
+        return null;
+    }
+}
+
 // ===============================
 // 🔹 GENERADOR DE LINK
 // ===============================
@@ -75,7 +109,6 @@ function generarLink(preferencias = {}) {
     const params = new URLSearchParams();
     if (preferencias.tipo) params.append('tipo', preferencias.tipo);
     if (preferencias.marca) params.append('marca', preferencias.marca);
-    if (preferencias.transmision) params.append('transmision', preferencias.transmision);
     
     const qs = params.toString();
     return qs ? `${CATALOGO_URL}?${qs}` : CATALOGO_URL;
@@ -85,24 +118,26 @@ function generarLink(preferencias = {}) {
 // 🔹 GESTIÓN DE SESIONES & PROMPT
 // ===============================
 function generarPromptSistema(autos) {
-    // Extraemos las categorías únicas para mostrarlas en el menú sin gastar muchos tokens
     const categoriasDisponibles = [...new Set(autos.map(a => a.tipo))].filter(Boolean).join(', ');
 
-    return `Eres el asistente de AutoRent. Eres amable, profesional y usas emojis.
+    return `Eres el asistente experto de AutoRent. Eres profesional, amigable y usas emojis.
 URL del catálogo: ${CATALOGO_URL}
 Categorías disponibles hoy: ${categoriasDisponibles || 'Sedan, SUV, Familiar'}
 
-FLUJO ESTRICTO DE ATENCIÓN:
-PASO 1: Si el usuario saluda, dale la bienvenida y MUÉSTRALE LAS CATEGORÍAS DISPONIBLES de forma amigable (ej. "Tenemos modelos tipo Sedan, SUV..."). Pregúntale cuál prefiere.
-PASO 2: Cuando el usuario elija un tipo de auto, dile que es una excelente elección. INMEDIATAMENTE pregúntale su Nombre, Correo Electrónico y Número de Teléfono para iniciar su proceso. No le des el enlace todavía.
-PASO 3: Solo cuando el usuario te haya proporcionado su nombre, correo y teléfono, cambia la "accion" a "recomendar", agradécele, e invítalo a ver sus opciones en el enlace.
+MENÚ DE PROCESOS (Debes guiar al cliente por estos pasos sutilmente):
+PASO 1 - BIENVENIDA Y MENÚ: Saluda y ofrece nuestras opciones: 1) Rentar un Auto, 2) Ver Catálogo, 3) Soporte. Si quiere rentar, ofrécele las categorías.
+PASO 2 - CAPTURA DE DATOS: Cuando elija una categoría, pídele su Nombre, Correo y Teléfono para su expediente.
+PASO 3 - RECOMENDACIÓN (accion: recomendar): Una vez que tengas sus datos, envíale el enlace filtrado. MUY IMPORTANTE: Pídele que revise la página y regrese a decirte el MODELO EXACTO que desea.
+PASO 4 - FECHAS (accion: solicitar_fechas): Cuando el cliente te diga qué modelo eligió (ej. "Quiero el Mazda 3"), felicítalo y pregúntale en qué FECHAS lo necesita (inicio y fin).
+PASO 5 - GUARDAR RESERVA (accion: guardar_reserva): Cuando tengas el modelo y las fechas, confirma que todo está listo, agradécele y cambia tu acción a "guardar_reserva" para que el sistema lo registre.
 
-SIEMPRE responde en este formato JSON estricto:
+FORMATO JSON OBLIGATORIO (No devuelvas texto fuera de este JSON):
 {
-  "respuesta_usuario": "Tu texto aquí...",
-  "accion": "charlar" o "recomendar",
+  "respuesta_usuario": "Tu texto para el cliente...",
+  "accion": "charlar" | "recomendar" | "solicitar_fechas" | "guardar_reserva",
   "datos_cliente": { "nombre": "", "correo": "", "telefono": "" },
-  "preferencias_detectadas": { "tipo": "", "transmision": "", "marca": "" }
+  "datos_reserva": { "vehiculo": "", "fecha_inicio": "", "fecha_fin": "" },
+  "preferencias_detectadas": { "tipo": "", "marca": "" }
 }`;
 }
 
@@ -111,7 +146,7 @@ function gestionarSesion(sessionId, promptSistema) {
         sesiones.set(sessionId, [{ role: "system", content: promptSistema }]);
     }
     let historial = sesiones.get(sessionId);
-    historial[0].content = promptSistema; // Actualiza el prompt con las categorías frescas
+    historial[0].content = promptSistema;
     
     if (historial.length > MAX_HISTORIAL) {
         historial = [historial[0], ...historial.slice(-MAX_HISTORIAL + 1)];
@@ -128,9 +163,7 @@ app.post('/webhook', async (req, res) => {
         const queryText = req.body.queryResult?.queryText || "";
         const sessionId = req.body.session || `sess_${Date.now()}`;
         
-        // Obtenemos autos para extraer las categorías y pasarlas al prompt
         const autos = await obtenerAutos(); 
-        
         const promptSistema = generarPromptSistema(autos);
         const historial = gestionarSesion(sessionId, promptSistema);
         
@@ -146,15 +179,32 @@ app.post('/webhook', async (req, res) => {
         const respuestaIA = JSON.parse(completion.choices[0].message.content.trim());
         let respuestaFinal = respuestaIA.respuesta_usuario;
 
-        // SOLO agregamos el link si la IA decidió que ya tiene los datos y es momento de recomendar
+        // ACCIÓN 1: RECOMENDAR (Insertar link dinámico)
         if (respuestaIA.accion === "recomendar") {
             const linkSeguro = generarLink(respuestaIA.preferencias_detectadas || {});
-            
-            // Reemplazo seguro o anexado del enlace
             if (respuestaFinal.includes(CATALOGO_URL)) {
                 respuestaFinal = respuestaFinal.replace(CATALOGO_URL, linkSeguro);
             } else {
-                respuestaFinal += `\n\n🔗 Puedes ver los modelos disponibles para ti aquí:\n${linkSeguro}`;
+                respuestaFinal += `\n\n🔗 Aquí tienes tus opciones: ${linkSeguro}`;
+            }
+        }
+
+        // ACCIÓN 2: GUARDAR RESERVA (Conectar con Excel/SheetDB)
+        if (respuestaIA.accion === "guardar_reserva") {
+            const cliente = respuestaIA.datos_cliente || {};
+            const reserva = respuestaIA.datos_reserva || {};
+            
+            // Verificamos que al menos tengamos algo de información antes de guardar
+            if (cliente.nombre && reserva.vehiculo) {
+                const folio = await guardarReservaEnExcel(cliente, reserva);
+                
+                if (folio) {
+                    respuestaFinal += `\n\n✅ ¡Hemos registrado tu reserva en nuestra base de datos con éxito! Tu folio de confirmación es: *${folio}*.`;
+                } else {
+                    respuestaFinal += `\n\n⚠️ Tuvimos un problema técnico al registrar tu reserva en el sistema, pero un agente se pondrá en contacto contigo pronto.`;
+                }
+            } else {
+                respuestaFinal = "Parece que me faltó algún dato. ¿Me podrías confirmar nuevamente tu nombre y el auto que deseas?";
             }
         }
 
@@ -166,11 +216,10 @@ app.post('/webhook', async (req, res) => {
 
     } catch (error) {
         console.error("❌ ERROR CRÍTICO EN WEBHOOK:", error);
-        res.json({ fulfillmentText: "¡Hola! Bienvenido a AutoRent 🚗. Estamos experimentando un pequeño retraso, ¿qué tipo de auto buscas?" });
+        res.json({ fulfillmentText: "¡Hola! Bienvenido a AutoRent 🚗. Nuestro menú principal es: 1) Rentar un auto. ¿En qué te ayudo?" });
     }
 });
 
 app.listen(port, () => {
     console.log(`🚀 AutoRent Webhook corriendo en el puerto ${port}`);
-    console.log(`🔗 Catálogo configurado a: ${CATALOGO_URL}`);
 });
