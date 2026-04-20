@@ -119,7 +119,7 @@ function generarLinkCatalogo(preferencias = {}) {
 }
 
 // ===============================
-// 🔹 PROMPT DEL SISTEMA MEJORADO
+// 🔹 PROMPT DEL SISTEMA MEJORADO (CORREGIDO)
 // ===============================
 function generarPromptSistema(autos) {
     // Agrupar autos por categorías para el prompt
@@ -155,7 +155,7 @@ ${resumenAutos}
 4. **Enlace al catálogo**: NUNCA envíes imágenes. En su lugar, genera un link personalizado usando esta estructura:
    ${CATALOGO_URL}?tipo=TIPO&marca=MARCA&transmision=TIPO&precio_max=CANTIDAD
    
-   Ejemplo de respuesta: "¡Excelente elección! Puedes ver todos nuestros ${preferencias.tipo || 'vehículos'} aquí: [ENLACE]. Cuando hayas elegido, regresa y dime cuál te gustó para continuar con la reserva."
+   Ejemplo de respuesta: "¡Excelente elección! Puedes ver todos nuestros vehículos del tipo que buscas aquí: [ENLACE]. Cuando hayas elegido, regresa y dime cuál te gustó para continuar con la reserva."
 
 5. **Proceso de reserva**: Una vez que el cliente elija un vehículo específico:
    - Solicita: Nombre completo, Teléfono (10 dígitos), Correo electrónico
@@ -504,21 +504,7 @@ app.post('/webhook', async (req, res) => {
                         text: [respuestaFinal]
                     }
                 }
-            ],
-            payload: {
-                google: {
-                    expectUserResponse: true,
-                    richResponse: {
-                        items: [
-                            {
-                                simpleResponse: {
-                                    textToSpeech: respuestaFinal
-                                }
-                            }
-                        ]
-                    }
-                }
-            }
+            ]
         });
 
         console.log(`✅ Respuesta enviada - Sesión: ${sessionId}`);
@@ -544,22 +530,6 @@ app.get('/health', (req, res) => {
 });
 
 // ===============================
-// 🔹 ENDPOINT PARA LIMPIAR CACHÉ (admin)
-// ===============================
-app.post('/admin/clear-cache', (req, res) => {
-    const authToken = req.headers.authorization;
-    const adminToken = process.env.ADMIN_TOKEN;
-    
-    if (adminToken && authToken === `Bearer ${adminToken}`) {
-        cacheAutos.data = [];
-        cacheAutos.lastUpdate = null;
-        res.json({ message: 'Caché limpiada exitosamente' });
-    } else {
-        res.status(401).json({ error: 'No autorizado' });
-    }
-});
-
-// ===============================
 // 🚀 INICIAR SERVIDOR
 // ===============================
 app.listen(port, () => {
@@ -574,7 +544,6 @@ app.listen(port, () => {
 ║  Endpoints:                            ║
 ║  - POST /webhook    (Dialogflow)       ║
 ║  - GET  /health     (Monitor)          ║
-║  - POST /admin/clear-cache             ║
 ╚════════════════════════════════════════╝
     `);
 });
