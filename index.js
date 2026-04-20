@@ -130,9 +130,14 @@ function generarLink(preferencias = {}) {
 function generarPromptSistema(autos) {
     const categoriasDisponibles = [...new Set(autos.map(a => a.tipo))].filter(Boolean).join(', ');
 
-    return `Eres el asistente experto de AutoRent. Tu trabajo es guiar al cliente por nuestros procesos.
+    return `Eres el asistente experto de AutoRent.
 
-MENÚ PRINCIPAL OBLIGATORIO (Si te saludan o piden el menú, MUESTRA TEXTUALMENTE ESTO):
+REGLAS DE ORO (Si las rompes, el sistema fallará):
+1. PROHIBIDO INVENTAR URLs: Cuando recomiendes autos o el catálogo, NUNCA escribas una URL. Usa EXACTAMENTE el texto "[LINK_AQUI]". El sistema lo reemplazará.
+2. PROHIBIDO INVENTAR FOLIOS: NUNCA inventes folios como AR-001. Cuando confirmes una reserva, usa EXACTAMENTE el texto "[FOLIO_AQUI]". El sistema lo reemplazará.
+
+MENÚ PRINCIPAL (OBLIGATORIO):
+Si el usuario saluda ("Hola") o pide el menú, DEBES responder con esta lista EXACTA:
 "¡Hola! Bienvenido a AutoRent 🚗. ¿Qué deseas hacer hoy?
 1️⃣ Rentar un Auto
 2️⃣ Ver Catálogo Completo
@@ -141,21 +146,21 @@ MENÚ PRINCIPAL OBLIGATORIO (Si te saludan o piden el menú, MUESTRA TEXTUALMENT
 5️⃣ Soporte Técnico"
 
 PROCESO 1: RENTAR UN AUTO
-- Paso 1: Pregunta sus preferencias (Tipo de auto, manual o automático, para cuántas personas). Las categorías hoy son: ${categoriasDisponibles}.
-- Paso 2: Pide Nombre, Correo y Teléfono para su registro.
-- Paso 3: Con sus datos, cambia tu acción a "recomendar". Dile que vea el enlace que generarás y te diga el MODELO EXACTO que desea.
-- Paso 4: Pide las FECHAS (inicio y fin) para ese modelo.
-- Paso 5: Cambia tu acción a "guardar_reserva". NUNCA repitas esta acción en turnos consecutivos.
+- P1: Pregunta sus preferencias (Tipo de auto, pasajeros). Categorías disponibles: ${categoriasDisponibles}.
+- P2: Pide Nombre, Correo y Teléfono.
+- P3: Cuando tengas datos y preferencias, cambia tu accion a "recomendar" y usa la etiqueta "[LINK_AQUI]". Pídele que regrese a decirte el modelo.
+- P4: Cuando te dé el modelo, pide las FECHAS.
+- P5: Cuando tengas modelo y fechas, cambia tu accion a "guardar_reserva" y usa "[FOLIO_AQUI]" para confirmar.
 
 OTROS PROCESOS:
-- Catálogo (2): Solo diles que pueden ver los autos en el enlace base.
-- Cancelar (3): Pide su Folio (ej. AR-12345). Cuando te lo den, cambia tu acción a "cancelar_reserva".
-- Requisitos (4): Menciona: INE/Pasaporte, Licencia vigente, Tarjeta de Crédito y ser mayor de 21 años.
-- Soporte (5): Pide su número para que un asesor le escriba por WhatsApp.
+- Catálogo: Dile "Aquí tienes nuestro catálogo: [LINK_AQUI]".
+- Cancelar: Pide su Folio. Cuando lo dé, cambia a "cancelar_reserva". NUNCA preguntes "¿Estás seguro?".
+- Requisitos: INE/Pasaporte, Licencia vigente, Tarjeta de Crédito, mayor de 21 años.
+- Soporte: Pide su teléfono para WhatsApp.
 
-FORMATO JSON OBLIGATORIO PARA TODAS TUS RESPUESTAS:
+FORMATO JSON OBLIGATORIO:
 {
-  "respuesta_usuario": "Tu mensaje para el cliente (AQUÍ DEBE IR EL MENÚ SI ES EL INICIO)...",
+  "respuesta_usuario": "Tu mensaje usando [LINK_AQUI] o [FOLIO_AQUI] según corresponda...",
   "accion": "charlar" | "recomendar" | "guardar_reserva" | "cancelar_reserva",
   "datos_cliente": { "nombre": "", "correo": "", "telefono": "" },
   "datos_reserva": { "vehiculo": "", "fecha_inicio": "", "fecha_fin": "", "folio_a_cancelar": "" },
@@ -189,11 +194,12 @@ app.post('/webhook', async (req, res) => {
         const promptSistema = generarPromptSistema(autos);
         const historial = gestionarSesion(sessionId, promptSistema);
         
-        // 🔥 LA MAGIA ESTÁ AQUÍ: ORDEN ESTRICTA PARA EL PRIMER MENSAJE 🔥
-        if (historial.length === 1) {
+        // Forzar Menú Inicial si el usuario dice palabras clave
+        const palabrasMenu = ['hola', 'menú', 'menu', 'inicio', 'buenos dias', 'buenas tardes'];
+        if (historial.length === 1 || palabrasMenu.includes(queryText.toLowerCase().trim())) {
             historial.push({ 
                 role: "system", 
-                content: "OBLIGATORIO: Esta es tu primera respuesta al cliente. DEBES saludarlo y escribir textualmente la lista con las 5 opciones (1️⃣ Rentar, 2️⃣ Catálogo, etc.). No resumas el menú." 
+                content: "El usuario está pidiendo el inicio. RESPONDE EXACTAMENTE CON LA LISTA DE LAS 5 OPCIONES NUMERADAS DEL MENÚ PRINCIPAL." 
             });
         }
 
@@ -203,20 +209,16 @@ app.post('/webhook', async (req, res) => {
             messages: historial,
             model: "llama-3.1-8b-instant",
             response_format: { type: "json_object" },
-            temperature: 0.2 // Bajamos la temperatura para que sea más obediente con las reglas
+            temperature: 0.1 // Temperatura casi en 0 para que no alucine folios ni URLs
         });
 
         const respuestaIA = JSON.parse(completion.choices[0].message.content.trim());
         let respuestaFinal = respuestaIA.respuesta_usuario;
 
-        // ACCIÓN: RECOMENDAR
-        if (respuestaIA.accion === "recomendar") {
+        // ACCIÓN: RECOMENDAR O MOSTRAR CATÁLOGO
+        if (respuestaIA.accion === "recomendar" || respuestaFinal.includes("[LINK_AQUI]")) {
             const linkSeguro = generarLink(respuestaIA.preferencias_detectadas || {});
-            if (respuestaFinal.includes(CATALOGO_URL)) {
-                respuestaFinal = respuestaFinal.replace(CATALOGO_URL, linkSeguro);
-            } else {
-                respuestaFinal += `\n\n🔗 Aquí tienes opciones basadas en lo que buscas: ${linkSeguro}`;
-            }
+            respuestaFinal = respuestaFinal.replace("[LINK_AQUI]", linkSeguro);
         }
 
         // ACCIÓN: GUARDAR RESERVA
@@ -227,11 +229,16 @@ app.post('/webhook', async (req, res) => {
             if (cliente.nombre && reserva.vehiculo) {
                 const folio = await guardarReservaEnExcel(cliente, reserva);
                 if (folio) {
-                    respuestaFinal += `\n\n✅ ¡Hemos registrado tu reserva con éxito! Tu folio de confirmación es: *${folio}*.`;
+                    respuestaFinal = respuestaFinal.replace("[FOLIO_AQUI]", `*${folio}*`);
+                    // 🔥 SEGURO ANTI-LOOP: Le inyectamos una amnesia forzada a la IA
+                    historial.push({
+                        role: "system",
+                        content: "SISTEMA: La reserva se guardó. Misión cumplida. PROHIBIDO volver a ejecutar la acción 'guardar_reserva'. Si el usuario dice gracias, despídete y tu acción debe ser 'charlar'."
+                    });
                     respuestaIA.accion = "charlar"; 
                     respuestaIA.datos_reserva = {}; 
                 } else {
-                    respuestaFinal += `\n\n⚠️ Tuvimos un pequeño problema técnico, pero un agente verificará tus datos pronto.`;
+                    respuestaFinal = "⚠️ Tuvimos un pequeño problema técnico al generar el folio, pero un agente verificará tus datos pronto.";
                 }
             } else {
                 respuestaFinal = "Me faltó un dato. ¿Podrías confirmarme nuevamente tu nombre, las fechas y el auto?";
@@ -246,10 +253,15 @@ app.post('/webhook', async (req, res) => {
             if (folioACancelar.length >= 4) {
                 const cancelado = await cancelarReservaEnExcel(folioACancelar);
                 if (cancelado) {
-                    respuestaFinal += `\n\n🚫 La reserva con folio *${folioACancelar}* ha sido cancelada exitosamente.`;
+                    respuestaFinal = `🚫 La reserva con folio *${folioACancelar}* ha sido cancelada exitosamente. ¿Necesitas ayuda con algo más?`;
                 } else {
-                    respuestaFinal += `\n\n⚠️ No pudimos cancelar el folio ${folioACancelar}. Verifica que esté bien escrito.`;
+                    respuestaFinal = `⚠️ No pudimos cancelar el folio ${folioACancelar}. Verifica que esté bien escrito o contacta a soporte.`;
                 }
+                // 🔥 SEGURO ANTI-LOOP PARA CANCELACIÓN
+                historial.push({
+                    role: "system",
+                    content: "SISTEMA: La cancelación se ejecutó. PROHIBIDO volver a usar 'cancelar_reserva'. Cambia tu acción a 'charlar'."
+                });
                 respuestaIA.accion = "charlar";
                 respuestaIA.datos_reserva.folio_a_cancelar = "";
             } else {
