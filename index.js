@@ -16,16 +16,16 @@ const sheetdbUrl = process.env.SHEETDB_URL;
 // 🔥 CONFIGURACIÓN OPTIMIZADA
 // ===============================
 const CATALOGO_URL = process.env.CATALOGO_URL || "https://tu-app.onrender.com/catalogo.html";
-const MAX_HISTORIAL = 6; // REDUCIDO para ahorrar tokens
-const TOKEN_LIMIT_WARNING = 5000; // Advertencia a 5000 tokens
-const MAX_RESPONSE_TOKENS = 400; // Máximo tokens en respuesta
+const MAX_HISTORIAL = 6;
+const TOKEN_LIMIT_WARNING = 5000;
+const MAX_RESPONSE_TOKENS = 400;
 
 // Cache de autos optimizada
 let cacheAutos = {
     data: [],
-    resumen: "", // Versión comprimida para prompts
+    resumen: "",
     lastUpdate: null,
-    ttl: 10 * 60 * 1000 // 10 minutos (antes 5)
+    ttl: 10 * 60 * 1000
 };
 
 // ===============================
@@ -42,13 +42,12 @@ if (!CLEAN_KEY) {
 const groq = new Groq({ apiKey: CLEAN_KEY });
 const sesiones = new Map();
 
-// Limpieza agresiva de sesiones (cada 30 minutos)
+// Limpieza de sesiones cada 30 minutos
 setInterval(() => {
     const ahora = Date.now();
     let limpiadas = 0;
     
     for (const [sessionId, data] of sesiones.entries()) {
-        // Sesiones inactivas por más de 30 minutos
         if (data.lastActivity && (ahora - data.lastActivity) > 30 * 60 * 1000) {
             sesiones.delete(sessionId);
             limpiadas++;
@@ -87,11 +86,11 @@ async function obtenerAutos(forceRefresh = false) {
                 precio: parseFloat(a.Precio_Por_Dia) || 0,
                 tipo: a.Categoria || a.Tipo || 'Sedan',
                 transmision: a.Transmision || 'Auto',
+                puertas: a.Puertas || '4',
                 pasajeros: a.Asientos || a.Pasajeros || '5',
                 año: a.Año || '2024'
             }));
 
-        // Crear resumen ultra-comprimido para prompts
         const resumen = crearResumenUltraComprimido(autosProcesados);
         
         cacheAutos = {
@@ -101,7 +100,7 @@ async function obtenerAutos(forceRefresh = false) {
             ttl: cacheAutos.ttl
         };
 
-        console.log(`✅ ${autosProcesados.length} autos en caché (${resumen.length} chars resumen)`);
+        console.log(`✅ ${autosProcesados.length} autos en caché`);
         return autosProcesados;
         
     } catch (error) {
@@ -111,10 +110,9 @@ async function obtenerAutos(forceRefresh = false) {
 }
 
 // ===============================
-// 🔹 RESUMEN ULTRA-COMPRIMIDO (Ahorra ~70% tokens)
+// 🔹 RESUMEN ULTRA-COMPRIMIDO
 // ===============================
 function crearResumenUltraComprimido(autos) {
-    // Agrupar por tipo y calcular stats
     const porTipo = {};
     autos.forEach(a => {
         if (!porTipo[a.tipo]) porTipo[a.tipo] = { autos: [], minPrecio: Infinity, maxPrecio: 0 };
@@ -123,17 +121,15 @@ function crearResumenUltraComprimido(autos) {
         porTipo[a.tipo].maxPrecio = Math.max(porTipo[a.tipo].maxPrecio, a.precio);
     });
     
-    // Crear resumen minimalista
     const partes = [];
     for (const [tipo, data] of Object.entries(porTipo)) {
         const autosMuestra = data.autos.slice(0, 2).map(a => 
-            `${a.marca[0]}${a.modelo[0]}` // Solo iniciales para ahorrar
+            `${a.marca[0]}${a.modelo[0]}`
         ).join('/');
         
         partes.push(`${tipo}:${data.autos.length}($${data.minPrecio}-${data.maxPrecio})[${autosMuestra}]`);
     }
     
-    // Añadir top 3 marcas
     const marcas = {};
     autos.forEach(a => marcas[a.marca] = (marcas[a.marca] || 0) + 1);
     const topMarcas = Object.entries(marcas)
@@ -153,25 +149,27 @@ app.get('/api/autos', async (req, res) => {
         const autos = await obtenerAutos();
         let resultados = [...autos];
         
-        // Filtros rápidos
-        const { tipo, marca, precio_max, pasajeros } = req.query;
+        const { tipo, marca, precio_max, pasajeros, search } = req.query;
         if (tipo) resultados = resultados.filter(a => a.tipo.toLowerCase().includes(tipo.toLowerCase()));
         if (marca) resultados = resultados.filter(a => a.marca.toLowerCase().includes(marca.toLowerCase()));
         if (precio_max) resultados = resultados.filter(a => a.precio <= parseFloat(precio_max));
         if (pasajeros) resultados = resultados.filter(a => parseInt(a.pasajeros) >= parseInt(pasajeros));
+        if (search) {
+            resultados = resultados.filter(a => 
+                a.vehiculo.toLowerCase().includes(search.toLowerCase()) ||
+                a.marca.toLowerCase().includes(search.toLowerCase()) ||
+                a.modelo.toLowerCase().includes(search.toLowerCase())
+            );
+        }
         
-        // Paginación
         const page = parseInt(req.query.page) || 1;
-        const limit = Math.min(parseInt(req.query.limit) || 20, 50); // Máximo 50
+        const limit = Math.min(parseInt(req.query.limit) || 20, 50);
         const start = (page - 1) * limit;
         
         res.json({
             success: true,
             total: resultados.length,
-            data: resultados.slice(start, start + limit),
-            cache: {
-                age: cacheAutos.lastUpdate ? Math.floor((Date.now() - cacheAutos.lastUpdate) / 1000) : null
-            }
+            data: resultados.slice(start, start + limit)
         });
         
     } catch (error) {
@@ -179,13 +177,29 @@ app.get('/api/autos', async (req, res) => {
     }
 });
 
+app.get('/api/metadata', async (req, res) => {
+    try {
+        const autos = await obtenerAutos();
+        
+        const marcas = [...new Set(autos.map(a => a.marca))].sort();
+        const tipos = [...new Set(autos.map(a => a.tipo))].sort();
+        const transmisiones = [...new Set(autos.map(a => a.transmision))].sort();
+        
+        res.json({
+            success: true,
+            data: { marcas, tipos, transmisiones }
+        });
+    } catch (error) {
+        res.status(500).json({ success: false, error: "Error interno" });
+    }
+});
+
 // ===============================
-// 🔹 PROMPT ULTRA-OPTIMIZADO (Versión 6000 tokens)
+// 🔹 PROMPT ULTRA-OPTIMIZADO
 // ===============================
 function generarPromptUltraOptimizado(autos, datosUsuario) {
     const resumenCache = cacheAutos.resumen || crearResumenUltraComprimido(autos);
     
-    // Datos de usuario ultra-comprimidos
     const userStr = datosUsuario?.nombre ? 
         `U:${datosUsuario.nombre.split(' ')[0]}|T:${datosUsuario.telefono?.slice(-4)||'?'}` : 
         'U:NUEVO';
@@ -194,7 +208,7 @@ function generarPromptUltraOptimizado(autos, datosUsuario) {
     
 📊${resumenCache}|${userStr}
 
-🎯MENÚ INICIAL(si es nuevo):
+🎯MENÚ INICIAL:
 "Bienvenido a AutoRent. Proporciona: Nombre, Email, WhatsApp. Opciones:
 1 Rentar 2 Catálogo 3 Cancelar 4 Requisitos 5 Soporte"
 
@@ -214,94 +228,91 @@ Responde SOLO JSON. Máximo 400 tokens.`;
 }
 
 // ===============================
-// 🔹 DETECCIÓN DE INTENCIONES SIN IA (Ahorra tokens)
+// 🔹 FUNCIONES DE DETECCIÓN
 // ===============================
-function detectarIntencionSinIA(texto) {
+function extraerDatosContacto(texto) {
+    const datos = { nombre: null, email: null, telefono: null };
+    
+    const emailMatch = texto.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/);
+    if (emailMatch) datos.email = emailMatch[0];
+    
+    const telefonoMatch = texto.match(/\b\d{10,15}\b/);
+    if (telefonoMatch) datos.telefono = telefonoMatch[0];
+    
+    const palabras = texto.split(/[\s,]+/);
+    for (let i = 0; i < palabras.length - 1; i++) {
+        if (palabras[i].match(/^[A-Z][a-záéíóúñ]+$/) && 
+            palabras[i+1].match(/^[A-Z][a-záéíóúñ]+$/)) {
+            datos.nombre = `${palabras[i]} ${palabras[i+1]}`;
+            break;
+        }
+    }
+    
+    return datos;
+}
+
+function detectarTipoVehiculo(texto) {
     const txt = texto.toLowerCase();
-    
-    // Patrones predefinidos
-    if (txt.match(/^[12345]$/)) {
-        return { tipo: 'menu', valor: parseInt(txt) };
-    }
-    
-    if (txt.includes('catalogo') || txt.includes('ver autos') || txt.includes('2')) {
-        return { tipo: 'catalogo' };
-    }
-    
-    if (txt.includes('cancelar') || txt.includes('3')) {
-        return { tipo: 'cancelar' };
-    }
-    
-    if (txt.includes('requisito') || txt.includes('4')) {
-        return { tipo: 'requisitos' };
-    }
-    
-    if (txt.includes('soporte') || txt.includes('ayuda') || txt.includes('5')) {
-        return { tipo: 'soporte' };
-    }
-    
-    if (txt.includes('rentar') || txt.includes('alquilar') || txt.includes('1')) {
-        return { tipo: 'rentar' };
-    }
-    
-    // Extraer datos de contacto
-    const email = texto.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/);
-    const telefono = texto.match(/\b\d{10,15}\b/);
-    const nombre = texto.match(/[A-Z][a-záéíóúñ]+ [A-Z][a-záéíóúñ]+/);
-    
-    if (email || telefono || nombre) {
-        return { 
-            tipo: 'datos_contacto', 
-            datos: {
-                email: email?.[0],
-                telefono: telefono?.[0],
-                nombre: nombre?.[0]
-            }
-        };
-    }
-    
+    if (txt.includes('económico') || txt.includes('economico')) return 'Económico';
+    if (txt.includes('sedan') || txt.includes('sedán')) return 'Sedan';
+    if (txt.includes('suv')) return 'SUV';
+    if (txt.includes('lujo')) return 'Lujo';
+    if (txt.includes('camioneta')) return 'Camioneta';
+    if (txt.includes('deportivo')) return 'Deportivo';
+    if (txt.includes('pickup') || txt.includes('pick up')) return 'Pickup';
     return null;
 }
 
-// ===============================
-// 🔹 RESPUESTAS PREDEFINIDAS (Sin usar IA)
-// ===============================
-function obtenerRespuestaPredefinida(intencion, datosUsuario = null) {
-    const nombre = datosUsuario?.nombre?.split(' ')[0] || '';
-    const saludo = nombre ? `¡Hola ${nombre}! ` : '';
+function detectarTransmision(texto) {
+    const txt = texto.toLowerCase();
+    if (txt.includes('automática') || txt.includes('automatica') || txt.includes('auto')) return 'Automática';
+    if (txt.includes('estándar') || txt.includes('standard') || txt.includes('manual')) return 'Estándar';
+    return null;
+}
+
+function detectarPuertas(texto) {
+    const match = texto.match(/\b([2-5])\s*(puertas?)?\b/);
+    if (match) return parseInt(match[1]);
+    return null;
+}
+
+function detectarPasajeros(texto) {
+    const match = texto.match(/\b([2-9])\s*(pasajeros?|personas?)\b/);
+    if (match) return parseInt(match[1]);
     
-    const respuestas = {
-        'catalogo': {
-            texto: `${saludo}Aquí está nuestro catálogo completo: ${CATALOGO_URL}?ref=chatbot&view=all\n\nCuando encuentres un auto que te guste, regresa y dime el modelo para continuar con tu renta.`,
-            accion: 'catalogo'
-        },
-        'cancelar': {
-            texto: `${saludo}Para cancelar una reserva, necesito el folio de confirmación (ej: AR123ABC). ¿Podrías proporcionármelo?`,
-            accion: 'cancelar'
-        },
-        'requisitos': {
-            texto: `📋 Requisitos para rentar:\n• INE/Pasaporte vigente\n• Licencia de conducir vigente\n• Tarjeta de crédito (garantía)\n• Mayor de 21 años\n\n¿Te gustaría ver autos disponibles? Responde 1 para rentar o 2 para ver catálogo.`,
-            accion: 'requisitos'
-        },
-        'soporte': {
-            texto: `${saludo}Un agente de soporte se comunicará contigo en los próximos 5-15 minutos al WhatsApp proporcionado. Mientras tanto, ¿puedo ayudarte con algo más?`,
-            accion: 'soporte'
-        },
-        'rentar': {
-            texto: `${saludo}¡Excelente! ¿Qué tipo de vehículo buscas?\n• Económico ($)\n• Sedan ($$)\n• SUV ($$$)\n• Lujo ($$$$)\n• Camioneta\n\nTambién dime tu presupuesto aproximado por día.`,
-            accion: 'rentar'
-        }
-    };
-    
-    return respuestas[intencion] || null;
+    const numeros = texto.match(/\d+/);
+    if (numeros) {
+        const num = parseInt(numeros[0]);
+        if (num >= 2 && num <= 9) return num;
+    }
+    return null;
+}
+
+function detectarUso(texto) {
+    const txt = texto.toLowerCase();
+    if (txt.includes('ciudad') || txt.includes('urbano')) return 'Ciudad';
+    if (txt.includes('carretera') || txt.includes('viaje') || txt.includes('largo')) return 'Carretera';
+    if (txt.includes('mixto') || txt.includes('ambos')) return 'Mixto';
+    return null;
+}
+
+function filtrarAutosCompleto(autos, preferencias) {
+    return autos.filter(auto => {
+        if (preferencias.tipo && auto.tipo !== preferencias.tipo) return false;
+        if (preferencias.transmision && auto.transmision !== preferencias.transmision) return false;
+        if (preferencias.puertas && parseInt(auto.puertas) !== preferencias.puertas) return false;
+        if (preferencias.pasajeros && parseInt(auto.pasajeros) < preferencias.pasajeros) return false;
+        if (preferencias.precio_max && auto.precio > preferencias.precio_max) return false;
+        return true;
+    });
 }
 
 // ===============================
-// 🔹 VALIDACIONES RÁPIDAS
+// 🔹 VALIDACIONES
 // ===============================
 function validarDatosRapido(datos) {
     const errores = [];
-    if (datos.telefono && !/^\d{10,15}$/.test(datos.telefono.replace(/\D/g, ''))) {
+    if (datos.telefono && !/^\d{10,15}$/.test(String(datos.telefono).replace(/\D/g, ''))) {
         errores.push('Teléfono inválido (10 dígitos)');
     }
     if (datos.correo && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(datos.correo)) {
@@ -318,7 +329,7 @@ function validarDatosRapido(datos) {
 }
 
 // ===============================
-// 🔹 GENERADOR DE LINK OPTIMIZADO
+// 🔹 GENERADOR DE LINK
 // ===============================
 function generarLink(preferencias = {}) {
     const params = new URLSearchParams();
@@ -332,7 +343,7 @@ function generarLink(preferencias = {}) {
 }
 
 // ===============================
-// 🔹 ENVÍOS (WhatsApp y Email optimizados)
+// 🔹 ENVÍOS (WhatsApp y Email)
 // ===============================
 async function enviarWhatsApp(numero, mensaje) {
     const instanceId = process.env.ULTRAMSG_INSTANCE_ID;
@@ -387,7 +398,10 @@ async function guardarReserva(datosCliente, datosReserva) {
             Vehiculo: datosReserva.vehiculo,
             Fecha_inicio: datosReserva.fecha_inicio,
             Fecha_fin: datosReserva.fecha_fin,
-            Estado: 'Confirmada'
+            Dias: datosReserva.dias,
+            Total: datosReserva.precio_total,
+            Estado: 'Confirmada',
+            Fecha_reserva: new Date().toISOString().split('T')[0]
         };
         
         await fetch(`${sheetdbUrl}?sheet=Reservas`, {
@@ -403,8 +417,40 @@ async function guardarReserva(datosCliente, datosReserva) {
     }
 }
 
+async function cancelarReserva(folio) {
+    try {
+        const response = await fetch(`${sheetdbUrl}/search?sheet=Reservas&Folio=${folio}`);
+        const data = await response.json();
+        
+        if (!data || data.length === 0) {
+            return { success: false, message: 'No se encontró la reserva' };
+        }
+        
+        const updateResponse = await fetch(`${sheetdbUrl}/Folio/${folio}?sheet=Reservas`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                data: {
+                    Estado: 'Cancelada',
+                    Fecha_Cancelacion: new Date().toISOString().split('T')[0]
+                }
+            })
+        });
+        
+        if (!updateResponse.ok) {
+            throw new Error('Error al actualizar');
+        }
+        
+        return { success: true, message: 'Reserva cancelada exitosamente' };
+        
+    } catch (error) {
+        console.error('Error cancelando reserva:', error);
+        return { success: false, message: 'Error al procesar la cancelación' };
+    }
+}
+
 // ===============================
-// 🔹 GESTIÓN DE SESIONES OPTIMIZADA
+// 🔹 GESTIÓN DE SESIONES
 // ===============================
 function gestionarSesion(sessionId, promptSistema) {
     if (!sesiones.has(sessionId)) {
@@ -412,38 +458,30 @@ function gestionarSesion(sessionId, promptSistema) {
             historial: [],
             datosUsuario: null,
             lastActivity: Date.now(),
-            intentosIA: 0 // Contador para decidir cuándo usar IA
+            estado: 'inicio',
+            preferencias: {
+                tipo: null,
+                transmision: null,
+                puertas: null,
+                pasajeros: null,
+                precio_max: null,
+                uso: null
+            }
         });
     }
     
     const sessionData = sesiones.get(sessionId);
     sessionData.lastActivity = Date.now();
     
-    // Mantener solo los últimos 6 mensajes (ahorra tokens)
     if (sessionData.historial.length > MAX_HISTORIAL) {
         sessionData.historial = sessionData.historial.slice(-MAX_HISTORIAL);
-    }
-    
-    // Actualizar prompt del sistema
-    if (sessionData.historial.length === 0 || sessionData.historial[0].role !== "system") {
-        sessionData.historial.unshift({ role: "system", content: promptSistema });
-    } else {
-        sessionData.historial[0].content = promptSistema;
     }
     
     return sessionData;
 }
 
 // ===============================
-// 🔹 ESTIMADOR DE TOKENS (Simple)
-// ===============================
-function estimarTokens(texto) {
-    // Estimación: ~4 caracteres por token en español
-    return Math.ceil(texto.length / 4);
-}
-
-// ===============================
-// 🚀 WEBHOOK ULTRA-OPTIMIZADO
+// 🚀 WEBHOOK PRINCIPAL
 // ===============================
 app.post('/webhook', async (req, res) => {
     console.log(`📨 Webhook recibido - ${new Date().toISOString()}`);
@@ -452,7 +490,6 @@ app.post('/webhook', async (req, res) => {
         const queryText = req.body.queryResult?.queryText || "";
         const sessionId = req.body.session || `sess_${Date.now()}`;
         
-        // Obtener autos (con caché)
         const autos = await obtenerAutos();
         
         if (autos.length === 0) {
@@ -461,76 +498,225 @@ app.post('/webhook', async (req, res) => {
             });
         }
 
-        // Gestionar sesión
         const sessionData = gestionarSesion(sessionId, '');
         
-        // PRIMERA INTERACCIÓN: Menú inicial
-        if (sessionData.historial.length <= 1) {
+        // PRIMERA INTERACCIÓN
+        if (sessionData.historial.length === 0) {
             const bienvenida = `¡Bienvenido a AutoRent! 🚗\n\nProporcióname:\n• Nombre completo\n• Email\n• WhatsApp (10 dígitos)\n\nOpciones:\n1️⃣ Rentar auto\n2️⃣ Ver catálogo\n3️⃣ Cancelar reserva\n4️⃣ Requisitos\n5️⃣ Soporte`;
             
             sessionData.historial.push({ 
                 role: "assistant", 
                 content: JSON.stringify({ r: bienvenida, a: "bienvenida" }) 
             });
+            sessionData.estado = 'menu_principal';
             
             return res.json({ fulfillmentText: bienvenida });
         }
         
-        // INTENTAR DETECCIÓN SIN IA PRIMERO (Ahorra tokens)
-        const intencionSimple = detectarIntencionSinIA(queryText);
+        // EXTRAER DATOS DE CONTACTO
+        const datosExtraidos = extraerDatosContacto(queryText);
+        if (datosExtraidos.nombre || datosExtraidos.email || datosExtraidos.telefono) {
+            sessionData.datosUsuario = {
+                nombre: datosExtraidos.nombre || sessionData.datosUsuario?.nombre,
+                correo: datosExtraidos.email || sessionData.datosUsuario?.correo,
+                telefono: datosExtraidos.telefono || sessionData.datosUsuario?.telefono
+            };
+        }
         
-        if (intencionSimple) {
-            console.log(`✅ Intención detectada sin IA: ${intencionSimple.tipo}`);
+        const texto = queryText.toLowerCase().trim();
+        
+        // MANEJO DE MENÚ PRINCIPAL
+        if (texto.match(/^[1-5]$/)) {
+            const opcion = parseInt(texto);
             
-            // Procesar datos de contacto
-            if (intencionSimple.tipo === 'datos_contacto') {
-                sessionData.datosUsuario = {
-                    ...sessionData.datosUsuario,
-                    ...intencionSimple.datos
-                };
-                
-                const respuesta = `¡Gracias ${intencionSimple.datos.nombre?.split(' ')[0] || ''}! ¿En qué puedo ayudarte?\n1 Rentar 2 Catálogo 3 Cancelar 4 Requisitos 5 Soporte`;
-                sessionData.historial.push({ role: "assistant", content: JSON.stringify({ r: respuesta, a: "datos" }) });
-                return res.json({ fulfillmentText: respuesta });
-            }
-            
-            // Respuestas predefinidas para opciones del menú
-            const respuestaPredef = obtenerRespuestaPredefinida(intencionSimple.tipo, sessionData.datosUsuario);
-            if (respuestaPredef) {
-                sessionData.historial.push({ 
-                    role: "assistant", 
-                    content: JSON.stringify(respuestaPredef) 
-                });
-                return res.json({ fulfillmentText: respuestaPredef.texto });
+            switch(opcion) {
+                case 1: // Rentar
+                    sessionData.estado = 'preguntando_tipo';
+                    const resp1 = `¡Excelente! ¿Qué tipo de vehículo buscas?\n• Económico\n• Sedan\n• SUV\n• Lujo\n• Camioneta\n• Deportivo`;
+                    sessionData.historial.push({ role: "assistant", content: JSON.stringify({ r: resp1, a: "rentar" }) });
+                    return res.json({ fulfillmentText: resp1 });
+                    
+                case 2: // Catálogo
+                    sessionData.estado = 'menu_principal';
+                    const link = generarLink({});
+                    const resp2 = `🔗 Catálogo completo:\n${link}\n\nCuando encuentres un auto, dime el modelo para continuar.`;
+                    sessionData.historial.push({ role: "assistant", content: JSON.stringify({ r: resp2, a: "catalogo" }) });
+                    return res.json({ fulfillmentText: resp2 });
+                    
+                case 3: // Cancelar
+                    sessionData.estado = 'esperando_folio';
+                    const resp3 = `Para cancelar una reserva, necesito el folio de confirmación (ej: AR123ABC). ¿Podrías proporcionármelo?`;
+                    sessionData.historial.push({ role: "assistant", content: JSON.stringify({ r: resp3, a: "cancelar" }) });
+                    return res.json({ fulfillmentText: resp3 });
+                    
+                case 4: // Requisitos
+                    sessionData.estado = 'menu_principal';
+                    const resp4 = `📋 Requisitos para rentar:\n• INE/Pasaporte vigente\n• Licencia de conducir vigente\n• Tarjeta de crédito (garantía)\n• Mayor de 21 años\n\n¿Te gustaría ver autos? Responde 1 para rentar o 2 para catálogo.`;
+                    sessionData.historial.push({ role: "assistant", content: JSON.stringify({ r: resp4, a: "requisitos" }) });
+                    return res.json({ fulfillmentText: resp4 });
+                    
+                case 5: // Soporte
+                    sessionData.estado = 'menu_principal';
+                    const nombre = sessionData.datosUsuario?.nombre?.split(' ')[0] || '';
+                    const resp5 = `${nombre ? '¡Gracias ' + nombre + '! ' : ''}Un agente te contactará en 5-15 minutos al WhatsApp proporcionado. ¿Puedo ayudarte con algo más?`;
+                    sessionData.historial.push({ role: "assistant", content: JSON.stringify({ r: resp5, a: "soporte" }) });
+                    return res.json({ fulfillmentText: resp5 });
             }
         }
         
-        // SI NO SE DETECTA, USAR IA (pero con prompt ultra-comprimido)
-        sessionData.intentosIA++;
+        // PALABRAS CLAVE DEL MENÚ
+        if (texto.includes('catálogo') || texto.includes('catalogo') || texto.includes('ver autos')) {
+            sessionData.estado = 'menu_principal';
+            const link = generarLink(sessionData.preferencias || {});
+            const resp = `🔗 Catálogo:\n${link}\n\nDime el modelo que te interese.`;
+            return res.json({ fulfillmentText: resp });
+        }
         
-        // Agregar mensaje del usuario
+        if (texto.includes('rentar') || texto.includes('alquilar')) {
+            sessionData.estado = 'preguntando_tipo';
+            const resp = `¡Claro! ¿Qué tipo de vehículo buscas?\n• Económico\n• Sedan\n• SUV\n• Lujo\n• Camioneta`;
+            return res.json({ fulfillmentText: resp });
+        }
+        
+        // CANCELACIÓN DE RESERVA
+        if (sessionData.estado === 'esperando_folio') {
+            const folio = queryText.trim().toUpperCase();
+            
+            if (folio.match(/^AR[A-Z0-9]+$/)) {
+                const resultado = await cancelarReserva(folio);
+                
+                if (resultado.success) {
+                    const respCancel = `✅ Reserva ${folio} cancelada exitosamente.\n\n¿Necesitas algo más?\n1️⃣ Rentar auto\n2️⃣ Ver catálogo\n4️⃣ Soporte`;
+                    sessionData.estado = 'menu_principal';
+                    return res.json({ fulfillmentText: respCancel });
+                } else {
+                    return res.json({ fulfillmentText: `❌ ${resultado.message}. Intenta de nuevo o responde "menú".` });
+                }
+            } else {
+                return res.json({ fulfillmentText: `❌ Folio inválido. Debe ser como AR123ABC. Intenta de nuevo.` });
+            }
+        }
+        
+        // PREGUNTAS SECUENCIALES PARA RENTA
+        if (sessionData.estado === 'preguntando_tipo') {
+            const tipoDetectado = detectarTipoVehiculo(texto);
+            
+            if (tipoDetectado) {
+                sessionData.preferencias.tipo = tipoDetectado;
+                sessionData.estado = 'preguntando_transmision';
+                
+                const resp = `✅ ${tipoDetectado}\n\n¿Prefieres transmisión automática o estándar?`;
+                return res.json({ fulfillmentText: resp });
+            } else {
+                return res.json({ fulfillmentText: `Por favor, selecciona: Económico, Sedan, SUV, Lujo o Camioneta` });
+            }
+        }
+        
+        if (sessionData.estado === 'preguntando_transmision') {
+            const transmisionDetectada = detectarTransmision(texto);
+            
+            if (transmisionDetectada) {
+                sessionData.preferencias.transmision = transmisionDetectada;
+                sessionData.estado = 'preguntando_puertas';
+                
+                const resp = `✅ ${transmisionDetectada}\n\n¿Cuántas puertas necesitas? (2, 4, 5)`;
+                return res.json({ fulfillmentText: resp });
+            } else {
+                return res.json({ fulfillmentText: `¿Automática o Estándar?` });
+            }
+        }
+        
+        if (sessionData.estado === 'preguntando_puertas') {
+            const puertasDetectadas = detectarPuertas(texto);
+            
+            if (puertasDetectadas) {
+                sessionData.preferencias.puertas = puertasDetectadas;
+                sessionData.estado = 'preguntando_pasajeros';
+                
+                const resp = `✅ ${puertasDetectadas} puertas\n\n¿Para cuántos pasajeros? (2, 4, 5, 7)`;
+                return res.json({ fulfillmentText: resp });
+            } else {
+                return res.json({ fulfillmentText: `¿2, 4 o 5 puertas?` });
+            }
+        }
+        
+        if (sessionData.estado === 'preguntando_pasajeros') {
+            const pasajerosDetectados = detectarPasajeros(texto);
+            
+            if (pasajerosDetectados) {
+                sessionData.preferencias.pasajeros = pasajerosDetectados;
+                sessionData.estado = 'preguntando_presupuesto';
+                
+                const resp = `✅ ${pasajerosDetectados} pasajeros\n\n¿Cuál es tu presupuesto máximo por día? (en pesos)`;
+                return res.json({ fulfillmentText: resp });
+            } else {
+                return res.json({ fulfillmentText: `¿Para cuántas personas? (2, 4, 5, 7)` });
+            }
+        }
+        
+        if (sessionData.estado === 'preguntando_presupuesto') {
+            const numeros = texto.match(/\d+/g);
+            
+            if (numeros) {
+                const presupuesto = parseInt(numeros[0]);
+                sessionData.preferencias.precio_max = presupuesto;
+                sessionData.estado = 'preguntando_uso';
+                
+                const resp = `✅ $${presupuesto} por día\n\n¿Qué uso le darás?\n• Ciudad\n• Carretera/Viaje\n• Mixto`;
+                return res.json({ fulfillmentText: resp });
+            } else {
+                return res.json({ fulfillmentText: `¿Cuánto quieres gastar por día? (ej: 500)` });
+            }
+        }
+        
+        if (sessionData.estado === 'preguntando_uso') {
+            const usoDetectado = detectarUso(texto);
+            
+            if (usoDetectado) {
+                sessionData.preferencias.uso = usoDetectado;
+                
+                const autosFiltrados = filtrarAutosCompleto(autos, sessionData.preferencias);
+                const link = generarLink(sessionData.preferencias);
+                
+                let respuesta = `🎯 ¡Perfecto! Con tus preferencias:\n`;
+                respuesta += `• Tipo: ${sessionData.preferencias.tipo}\n`;
+                respuesta += `• Transmisión: ${sessionData.preferencias.transmision}\n`;
+                respuesta += `• Puertas: ${sessionData.preferencias.puertas}\n`;
+                respuesta += `• Pasajeros: ${sessionData.preferencias.pasajeros}\n`;
+                respuesta += `• Presupuesto: $${sessionData.preferencias.precio_max}/día\n`;
+                respuesta += `• Uso: ${sessionData.preferencias.uso}\n\n`;
+                
+                if (autosFiltrados.length > 0) {
+                    respuesta += `✅ ${autosFiltrados.length} opciones:\n\n`;
+                    
+                    autosFiltrados.slice(0, 3).forEach(auto => {
+                        respuesta += `🚗 ${auto.vehiculo}\n   $${auto.precio}/día | ${auto.transmision} | ${auto.puertas}p | ${auto.pasajeros} pas\n\n`;
+                    });
+                    
+                    if (autosFiltrados.length > 3) {
+                        respuesta += `Y ${autosFiltrados.length - 3} más...\n`;
+                    }
+                    
+                    respuesta += `\n🔗 Ver catálogo: ${link}\n\n¿Cuál te gusta? Dime el modelo.`;
+                } else {
+                    respuesta += `😅 No hay coincidencias exactas. Mira opciones similares:\n${link}`;
+                }
+                
+                sessionData.estado = 'seleccion_auto';
+                return res.json({ fulfillmentText: respuesta });
+            } else {
+                return res.json({ fulfillmentText: `¿Ciudad, Carretera o Mixto?` });
+            }
+        }
+        
+        // FALLBACK A IA
+        console.log('🤖 Usando IA como fallback...');
+        
         sessionData.historial.push({ role: "user", content: queryText });
         
-        // Generar prompt ultra-optimizado
         const promptSistema = generarPromptUltraOptimizado(autos, sessionData.datosUsuario);
-        sessionData.historial[0].content = promptSistema;
+        sessionData.historial[0] = { role: "system", content: promptSistema };
         
-        // Estimar tokens antes de enviar
-        const historialStr = JSON.stringify(sessionData.historial);
-        const tokensEstimados = estimarTokens(historialStr);
-        
-        console.log(`📊 Tokens estimados: ${tokensEstimados}/6000`);
-        
-        if (tokensEstimados > TOKEN_LIMIT_WARNING) {
-            console.warn(`⚠️ ¡ALERTA! Tokens altos: ${tokensEstimados}`);
-            // Limpiar historial agresivamente
-            sessionData.historial = [
-                sessionData.historial[0], // System prompt
-                sessionData.historial[sessionData.historial.length - 1] // Último mensaje
-            ];
-        }
-        
-        // Llamar a Groq
         let respuestaIA;
         try {
             const completion = await groq.chat.completions.create({
@@ -544,7 +730,6 @@ app.post('/webhook', async (req, res) => {
             const content = completion.choices[0].message.content.trim();
             respuestaIA = JSON.parse(content);
             
-            // Compatibilidad con formato comprimido
             if (!respuestaIA.respuesta_usuario && respuestaIA.r) {
                 respuestaIA.respuesta_usuario = respuestaIA.r;
                 respuestaIA.accion = respuestaIA.a || 'hablar';
@@ -552,15 +737,14 @@ app.post('/webhook', async (req, res) => {
             
         } catch (error) {
             console.error("❌ Error Groq:", error.message);
-            respuestaIA = {
-                respuesta_usuario: "Lo siento, tuve un error. ¿Podrías intentar de nuevo?",
-                accion: "error"
-            };
+            
+            return res.json({ 
+                fulfillmentText: `Lo siento, tuve un error. ¿Podrías intentar de nuevo?\n\n1️⃣ Rentar auto\n2️⃣ Ver catálogo\n3️⃣ Cancelar reserva\n4️⃣ Requisitos\n5️⃣ Soporte` 
+            });
         }
         
         let respuestaFinal = respuestaIA.respuesta_usuario;
         
-        // PROCESAR ACCIONES
         if (respuestaIA.accion === "catalogo" || respuestaIA.accion === "recomendar") {
             const link = generarLink(respuestaIA.preferencias || {});
             if (!respuestaFinal.includes(link)) {
@@ -569,10 +753,9 @@ app.post('/webhook', async (req, res) => {
         }
         
         if (respuestaIA.accion === "guardar_reserva") {
-            const datos_cliente = respuestaIA.c || respuestaIA.datos_cliente || {};
+            const datos_cliente = respuestaIA.c || respuestaIA.datos_cliente || sessionData.datosUsuario || {};
             const datos_reserva = respuestaIA.v || respuestaIA.datos_reserva || {};
             
-            // Validaciones
             const errores = validarDatosRapido({
                 ...datos_cliente,
                 ...datos_reserva
@@ -584,7 +767,6 @@ app.post('/webhook', async (req, res) => {
                 const folio = await guardarReserva(datos_cliente, datos_reserva);
                 
                 if (folio) {
-                    // Notificaciones asíncronas (no esperamos)
                     enviarWhatsApp(datos_cliente.telefono, 
                         `✅ Reserva #${folio}\n${datos_reserva.vehiculo}\n${datos_reserva.fecha_inicio}-${datos_reserva.fecha_fin}\nTotal: $${datos_reserva.precio_total}`
                     ).catch(console.error);
@@ -592,20 +774,17 @@ app.post('/webhook', async (req, res) => {
                     enviarCorreo(datos_cliente.correo, datos_reserva, datos_cliente, folio)
                         .catch(console.error);
                     
-                    respuestaFinal = `✅ ¡Reserva confirmada!\nFolio: ${folio}\n${datos_reserva.vehiculo}\n${datos_reserva.fecha_inicio} al ${datos_reserva.fecha_fin}\nTotal: $${datos_reserva.precio_total}\n\nTe enviamos los detalles por WhatsApp y email.`;
+                    respuestaFinal = `✅ ¡Reserva confirmada!\nFolio: ${folio}\n${datos_reserva.vehiculo}\n${datos_reserva.fecha_inicio} al ${datos_reserva.fecha_fin}\nTotal: $${datos_reserva.precio_total}\n\nTe enviamos los detalles.`;
+                    sessionData.estado = 'menu_principal';
                 } else {
                     respuestaFinal = "❌ Error al guardar reserva. Intenta de nuevo.";
                 }
             }
         }
         
-        // Guardar respuesta en historial (comprimida)
         sessionData.historial.push({ 
             role: "assistant", 
-            content: JSON.stringify({
-                r: respuestaFinal.substring(0, 200), // Solo guardamos primeras 200 chars
-                a: respuestaIA.accion
-            }) 
+            content: JSON.stringify({ r: respuestaFinal.substring(0, 200), a: respuestaIA.accion }) 
         });
         
         res.json({ fulfillmentText: respuestaFinal });
@@ -613,13 +792,13 @@ app.post('/webhook', async (req, res) => {
     } catch (error) {
         console.error("❌ ERROR CRÍTICO:", error);
         res.json({ 
-            fulfillmentText: "Error interno. Por favor, intenta de nuevo." 
+            fulfillmentText: "Error interno. Intenta de nuevo:\n1️⃣ Rentar auto\n2️⃣ Ver catálogo\n3️⃣ Cancelar reserva\n4️⃣ Requisitos\n5️⃣ Soporte" 
         });
     }
 });
 
 // ===============================
-// 🔹 ENDPOINTS ADMINISTRATIVOS
+// 🔹 ENDPOINTS ADMIN
 // ===============================
 app.get('/health', (req, res) => {
     const memUsage = process.memoryUsage();
@@ -659,7 +838,6 @@ app.listen(port, () => {
 ║ Puerto: ${port}
 ║ Catálogo: ${CATALOGO_URL}
 ║ Max Historial: ${MAX_HISTORIAL} mensajes
-║ Token Warning: ${TOKEN_LIMIT_WARNING}
 ╚════════════════════════════════════════╝
     `);
 });
