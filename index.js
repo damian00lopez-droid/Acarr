@@ -11,11 +11,10 @@ const port = process.env.PORT || 3000;
 const sheetdbUrl = process.env.SHEETDB_URL;
 
 // ===============================
-// 🔥 CONFIGURACIÓN (URL FORZADA)
+// 🔥 CONFIGURACIÓN
 // ===============================
-// Forzamos la URL correcta aquí para evitar que Render use una variable vieja
 const CATALOGO_URL = "https://acarr-v3a2.onrender.com/catalogo.html";
-const MAX_HISTORIAL = 8;
+const MAX_HISTORIAL = 10; // Aumentamos un poco para no olvidar los datos del usuario
 
 // ===============================
 // 🔥 VALIDACIÓN API KEY GROQ
@@ -85,19 +84,24 @@ function generarLink(preferencias = {}) {
 // ===============================
 // 🔹 GESTIÓN DE SESIONES & PROMPT
 // ===============================
-function generarPromptSistema() {
-    return `Eres el asistente de AutoRent. Eres amable, conciso y usas emojis.
-URL del catálogo: ${CATALOGO_URL}
+function generarPromptSistema(autos) {
+    // Extraemos las categorías únicas para mostrarlas en el menú sin gastar muchos tokens
+    const categoriasDisponibles = [...new Set(autos.map(a => a.tipo))].filter(Boolean).join(', ');
 
-REGLAS DE COMPORTAMIENTO:
-1. SALUDO INICIAL: Si el usuario dice "hola" o es el primer contacto, responde con una bienvenida MUY CORTA. Ejemplo: "¡Hola! Bienvenido a AutoRent 🚗. ¿Qué tipo de vehículo estás buscando hoy?". NO hagas una lista larga de preguntas.
-2. DESCUBRIMIENTO: Deja que el cliente te diga qué quiere (ej. familiar, económico, SUV, estándar).
-3. RECOMENDACIÓN: Cuando el cliente ya te dio alguna preferencia, haz un comentario breve y cambia la "accion" a "recomendar" para entregarle el enlace.
+    return `Eres el asistente de AutoRent. Eres amable, profesional y usas emojis.
+URL del catálogo: ${CATALOGO_URL}
+Categorías disponibles hoy: ${categoriasDisponibles || 'Sedan, SUV, Familiar'}
+
+FLUJO ESTRICTO DE ATENCIÓN:
+PASO 1: Si el usuario saluda, dale la bienvenida y MUÉSTRALE LAS CATEGORÍAS DISPONIBLES de forma amigable (ej. "Tenemos modelos tipo Sedan, SUV..."). Pregúntale cuál prefiere.
+PASO 2: Cuando el usuario elija un tipo de auto, dile que es una excelente elección. INMEDIATAMENTE pregúntale su Nombre, Correo Electrónico y Número de Teléfono para iniciar su proceso. No le des el enlace todavía.
+PASO 3: Solo cuando el usuario te haya proporcionado su nombre, correo y teléfono, cambia la "accion" a "recomendar", agradécele, e invítalo a ver sus opciones en el enlace.
 
 SIEMPRE responde en este formato JSON estricto:
 {
   "respuesta_usuario": "Tu texto aquí...",
   "accion": "charlar" o "recomendar",
+  "datos_cliente": { "nombre": "", "correo": "", "telefono": "" },
   "preferencias_detectadas": { "tipo": "", "transmision": "", "marca": "" }
 }`;
 }
@@ -107,7 +111,7 @@ function gestionarSesion(sessionId, promptSistema) {
         sesiones.set(sessionId, [{ role: "system", content: promptSistema }]);
     }
     let historial = sesiones.get(sessionId);
-    historial[0].content = promptSistema;
+    historial[0].content = promptSistema; // Actualiza el prompt con las categorías frescas
     
     if (historial.length > MAX_HISTORIAL) {
         historial = [historial[0], ...historial.slice(-MAX_HISTORIAL + 1)];
@@ -124,10 +128,10 @@ app.post('/webhook', async (req, res) => {
         const queryText = req.body.queryResult?.queryText || "";
         const sessionId = req.body.session || `sess_${Date.now()}`;
         
-        // Actualizamos caché en background, pero no le mandamos todos los autos a Groq para ahorrar tokens
-        await obtenerAutos(); 
+        // Obtenemos autos para extraer las categorías y pasarlas al prompt
+        const autos = await obtenerAutos(); 
         
-        const promptSistema = generarPromptSistema();
+        const promptSistema = generarPromptSistema(autos);
         const historial = gestionarSesion(sessionId, promptSistema);
         
         historial.push({ role: "user", content: queryText });
@@ -142,16 +146,15 @@ app.post('/webhook', async (req, res) => {
         const respuestaIA = JSON.parse(completion.choices[0].message.content.trim());
         let respuestaFinal = respuestaIA.respuesta_usuario;
 
-        // SOLO agregamos el link si la IA decidió que ya es momento de recomendar
+        // SOLO agregamos el link si la IA decidió que ya tiene los datos y es momento de recomendar
         if (respuestaIA.accion === "recomendar") {
             const linkSeguro = generarLink(respuestaIA.preferencias_detectadas || {});
             
-            // Si la IA metió el enlace base en el texto, lo reemplazamos por el que tiene filtros
+            // Reemplazo seguro o anexado del enlace
             if (respuestaFinal.includes(CATALOGO_URL)) {
                 respuestaFinal = respuestaFinal.replace(CATALOGO_URL, linkSeguro);
             } else {
-                // Si no lo puso, lo agregamos al final elegantemente
-                respuestaFinal += `\n\n🔗 Puedes ver las opciones aquí:\n${linkSeguro}`;
+                respuestaFinal += `\n\n🔗 Puedes ver los modelos disponibles para ti aquí:\n${linkSeguro}`;
             }
         }
 
@@ -163,7 +166,7 @@ app.post('/webhook', async (req, res) => {
 
     } catch (error) {
         console.error("❌ ERROR CRÍTICO EN WEBHOOK:", error);
-        res.json({ fulfillmentText: "¡Hola! Bienvenido a AutoRent 🚗. ¿Qué tipo de auto estás buscando hoy?" });
+        res.json({ fulfillmentText: "¡Hola! Bienvenido a AutoRent 🚗. Estamos experimentando un pequeño retraso, ¿qué tipo de auto buscas?" });
     }
 });
 
