@@ -5,99 +5,317 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>AutoRent - Catálogo de Vehículos</title>
     <style>
-        * { margin: 0; padding: 0; box-sizing: border-box; }
-        body { 
-            font-family: 'Segoe UI', Arial, sans-serif; 
-            padding: 20px; 
-            max-width: 1400px; 
-            margin: 0 auto; 
-            background-color: #f9f9f9;
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
         }
-        h1 { color: #1a1a1a; margin-bottom: 20px; }
-        .filtros { 
-            background: white; 
-            padding: 20px; 
-            border-radius: 12px; 
-            box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+        
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 20px;
+            padding: 30px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+        }
+        
+        h1 {
+            color: #333;
+            margin-bottom: 10px;
+            font-size: 2.5em;
+        }
+        
+        .subtitle {
+            color: #666;
+            margin-bottom: 30px;
+            font-size: 1.1em;
+        }
+        
+        .filtros-container {
+            background: #f8f9fa;
+            padding: 20px;
+            border-radius: 10px;
             margin-bottom: 30px;
         }
-        .badge-filtro {
-            background: #0077ff;
-            color: white;
-            padding: 6px 14px;
-            border-radius: 30px;
-            display: inline-block;
-            margin: 5px 5px 0 0;
+        
+        .filtros-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            margin-top: 15px;
+        }
+        
+        .filtro-item {
+            display: flex;
+            flex-direction: column;
+        }
+        
+        .filtro-item label {
+            font-size: 0.9em;
+            color: #555;
+            margin-bottom: 5px;
+            font-weight: 500;
+        }
+        
+        .filtro-item select,
+        .filtro-item input {
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
             font-size: 14px;
         }
+        
+        .filtros-activos {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            margin-top: 15px;
+        }
+        
+        .filtro-tag {
+            background: #667eea;
+            color: white;
+            padding: 5px 15px;
+            border-radius: 20px;
+            font-size: 0.9em;
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+        }
+        
+        .filtro-tag button {
+            background: none;
+            border: none;
+            color: white;
+            cursor: pointer;
+            font-size: 1.2em;
+            margin-left: 5px;
+        }
+        
+        .stats {
+            margin-bottom: 20px;
+            color: #666;
+            font-size: 0.95em;
+        }
+        
         .grid-autos {
             display: grid;
             grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
             gap: 25px;
+            margin-top: 20px;
         }
+        
         .auto-card {
+            border: 1px solid #e0e0e0;
+            border-radius: 12px;
+            overflow: hidden;
+            transition: transform 0.3s, box-shadow 0.3s;
             background: white;
-            border-radius: 16px;
-            padding: 20px;
-            box-shadow: 0 5px 15px rgba(0,0,0,0.05);
-            transition: transform 0.2s;
-            border: 1px solid #eee;
         }
-        .auto-card:hover { transform: translateY(-5px); box-shadow: 0 10px 25px rgba(0,0,0,0.1); }
-        .auto-card h3 { color: #0a2540; margin-bottom: 10px; font-size: 1.4rem; }
-        .auto-card p { margin: 8px 0; color: #444; }
-        .auto-card .precio { font-weight: bold; color: #2e7d32; font-size: 1.2rem; margin: 15px 0; }
-        .btn-reservar {
-            background: #25D366;
+        
+        .auto-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 10px 30px rgba(0,0,0,0.15);
+        }
+        
+        .auto-imagen {
+            width: 100%;
+            height: 180px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-size: 3em;
+        }
+        
+        .auto-info {
+            padding: 20px;
+        }
+        
+        .auto-titulo {
+            font-size: 1.3em;
+            font-weight: bold;
+            margin-bottom: 10px;
+            color: #333;
+        }
+        
+        .auto-precio {
+            font-size: 1.8em;
+            color: #667eea;
+            font-weight: bold;
+            margin-bottom: 15px;
+        }
+        
+        .auto-precio small {
+            font-size: 0.5em;
+            color: #999;
+            font-weight: normal;
+        }
+        
+        .auto-detalles {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 10px;
+            margin-bottom: 15px;
+            font-size: 0.9em;
+        }
+        
+        .detalle-item {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+            color: #666;
+        }
+        
+        .btn-seleccionar {
+            width: 100%;
+            padding: 12px;
+            background: #667eea;
             color: white;
             border: none;
-            padding: 12px 20px;
-            border-radius: 40px;
-            font-size: 16px;
-            font-weight: bold;
+            border-radius: 8px;
+            font-size: 1em;
             cursor: pointer;
-            width: 100%;
-            margin-top: 10px;
-            transition: background 0.2s;
+            transition: background 0.3s;
         }
-        .btn-reservar:hover { background: #1da851; }
+        
+        .btn-seleccionar:hover {
+            background: #5a67d8;
+        }
+        
         .btn-regresar {
             position: fixed;
             bottom: 30px;
             right: 30px;
-            background: #0a2540;
+            background: #25D366;
             color: white;
             border: none;
             padding: 15px 30px;
             border-radius: 50px;
-            font-size: 18px;
+            font-size: 1.1em;
             cursor: pointer;
-            box-shadow: 0 5px 20px rgba(0,0,0,0.2);
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            z-index: 100;
+            box-shadow: 0 5px 20px rgba(37, 211, 102, 0.4);
+            transition: transform 0.3s;
+            z-index: 1000;
         }
-        .btn-regresar:hover { background: #1a3a5c; }
-        .sin-resultados {
+        
+        .btn-regresar:hover {
+            transform: scale(1.05);
+        }
+        
+        .loading {
             text-align: center;
-            padding: 60px;
-            font-size: 1.2rem;
+            padding: 50px;
             color: #666;
         }
-        .loader { text-align: center; padding: 40px; font-size: 1.2rem; }
+        
+        .no-resultados {
+            text-align: center;
+            padding: 50px;
+            color: #999;
+            font-size: 1.2em;
+        }
+        
+        .error-mensaje {
+            background: #fee;
+            color: #c33;
+            padding: 15px;
+            border-radius: 8px;
+            margin: 20px 0;
+        }
+        
+        @media (max-width: 768px) {
+            .container {
+                padding: 15px;
+            }
+            
+            h1 {
+                font-size: 2em;
+            }
+            
+            .grid-autos {
+                grid-template-columns: 1fr;
+            }
+            
+            .btn-regresar {
+                bottom: 20px;
+                right: 20px;
+                padding: 12px 24px;
+                font-size: 1em;
+            }
+        }
     </style>
 </head>
 <body>
-    <h1>🚗 Catálogo de Vehículos AutoRent</h1>
-    
-    <div class="filtros">
-        <h3 style="margin-bottom: 10px;">🔍 Filtros aplicados:</h3>
-        <div id="filtros-activos"></div>
-    </div>
-    
-    <div id="lista-autos" class="grid-autos">
-        <div class="loader">Cargando vehículos disponibles...</div>
+    <div class="container">
+        <h1>🚗 AutoRent</h1>
+        <p class="subtitle">Encuentra el vehículo perfecto para ti</p>
+        
+        <div class="filtros-container">
+            <h3>🔍 Filtros</h3>
+            <div class="filtros-grid">
+                <div class="filtro-item">
+                    <label>Tipo de vehículo</label>
+                    <select id="filtro-tipo">
+                        <option value="">Todos</option>
+                    </select>
+                </div>
+                
+                <div class="filtro-item">
+                    <label>Marca</label>
+                    <select id="filtro-marca">
+                        <option value="">Todas</option>
+                    </select>
+                </div>
+                
+                <div class="filtro-item">
+                    <label>Transmisión</label>
+                    <select id="filtro-transmision">
+                        <option value="">Todas</option>
+                    </select>
+                </div>
+                
+                <div class="filtro-item">
+                    <label>Precio máximo/día</label>
+                    <input type="number" id="filtro-precio" placeholder="Ej: 1000" min="0">
+                </div>
+                
+                <div class="filtro-item">
+                    <label>Pasajeros (mínimo)</label>
+                    <input type="number" id="filtro-pasajeros" placeholder="Ej: 5" min="1" max="10">
+                </div>
+                
+                <div class="filtro-item">
+                    <label>🔎 Buscar</label>
+                    <input type="text" id="filtro-buscar" placeholder="Marca o modelo...">
+                </div>
+            </div>
+            
+            <div class="filtros-activos" id="filtros-activos"></div>
+            
+            <div style="margin-top: 15px; text-align: right;">
+                <button onclick="limpiarFiltros()" style="padding: 10px 20px; background: #6c757d; color: white; border: none; border-radius: 5px; cursor: pointer; margin-right: 10px;">
+                    Limpiar filtros
+                </button>
+                <button onclick="aplicarFiltros()" style="padding: 10px 20px; background: #667eea; color: white; border: none; border-radius: 5px; cursor: pointer;">
+                    Aplicar filtros
+                </button>
+            </div>
+        </div>
+        
+        <div class="stats" id="stats"></div>
+        <div class="grid-autos" id="lista-autos">
+            <div class="loading">Cargando catálogo...</div>
+        </div>
     </div>
     
     <button class="btn-regresar" onclick="regresarAlChat()">
@@ -105,101 +323,249 @@
     </button>
 
     <script>
-        // Obtener parámetros de la URL
+        // Configuración
+        const API_URL = '/api/autos';
         const urlParams = new URLSearchParams(window.location.search);
-        const filtros = {
-            tipo: urlParams.get('tipo'),
-            marca: urlParams.get('marca'),
-            transmision: urlParams.get('transmision'),
-            precio_max: urlParams.get('precio_max'),
-            pasajeros: urlParams.get('pasajeros')
-        };
         
-        // Mostrar filtros activos
-        const contenedorFiltros = document.getElementById('filtros-activos');
-        let htmlFiltros = '';
-        for (const [clave, valor] of Object.entries(filtros)) {
-            if (valor) {
-                const etiqueta = {
-                    tipo: 'Categoría',
-                    marca: 'Marca',
-                    transmision: 'Transmisión',
-                    precio_max: 'Precio máximo',
-                    pasajeros: 'Mínimo pasajeros'
-                }[clave] || clave;
-                htmlFiltros += `<span class="badge-filtro">${etiqueta}: ${valor}</span>`;
+        // Estado
+        let autosData = [];
+        let metadata = {};
+        let filtrosActuales = {};
+        
+        // Inicializar
+        document.addEventListener('DOMContentLoaded', () => {
+            cargarMetadata();
+            cargarAutos();
+            cargarFiltrosDesdeURL();
+        });
+        
+        // Cargar metadata (marcas, tipos, etc.)
+        async function cargarMetadata() {
+            try {
+                const response = await fetch('/api/metadata');
+                const data = await response.json();
+                
+                if (data.success) {
+                    metadata = data.data;
+                    
+                    // Llenar selects
+                    llenarSelect('filtro-tipo', metadata.tipos);
+                    llenarSelect('filtro-marca', metadata.marcas);
+                    llenarSelect('filtro-transmision', metadata.transmisiones);
+                }
+            } catch (error) {
+                console.error('Error cargando metadata:', error);
             }
         }
-        contenedorFiltros.innerHTML = htmlFiltros || '<p style="color:#888;">✨ Mostrando todos los vehículos disponibles</p>';
         
-        // Construir URL para la API con los mismos filtros
-        function construirUrlAPI() {
-            const base = '/api/autos';
-            const params = new URLSearchParams();
-            if (filtros.tipo) params.append('tipo', filtros.tipo);
-            if (filtros.marca) params.append('marca', filtros.marca);
-            if (filtros.transmision) params.append('transmision', filtros.transmision);
-            if (filtros.precio_max) params.append('precio_max', filtros.precio_max);
-            if (filtros.pasajeros) params.append('pasajeros', filtros.pasajeros);
-            const query = params.toString();
-            return query ? `${base}?${query}` : base;
+        function llenarSelect(id, opciones) {
+            const select = document.getElementById(id);
+            if (!select) return;
+            
+            const valorActual = select.value;
+            
+            opciones.forEach(opcion => {
+                const option = document.createElement('option');
+                option.value = opcion;
+                option.textContent = opcion;
+                select.appendChild(option);
+            });
+            
+            if (valorActual) {
+                select.value = valorActual;
+            }
         }
         
-        // Cargar autos desde el backend
+        // Cargar autos desde API
         async function cargarAutos() {
-            const contenedor = document.getElementById('lista-autos');
             try {
-                const response = await fetch(construirUrlAPI());
-                if (!response.ok) throw new Error('Error de red');
-                const autos = await response.json();
+                document.getElementById('lista-autos').innerHTML = '<div class="loading">Cargando catálogo...</div>';
                 
-                if (autos.length === 0) {
-                    contenedor.innerHTML = '<div class="sin-resultados">😕 No se encontraron vehículos con esos filtros.<br>Intenta con otras preferencias.</div>';
-                    return;
+                // Construir query string
+                const params = new URLSearchParams();
+                
+                Object.keys(filtrosActuales).forEach(key => {
+                    if (filtrosActuales[key]) {
+                        params.append(key, filtrosActuales[key]);
+                    }
+                });
+                
+                const response = await fetch(`${API_URL}?${params.toString()}`);
+                const data = await response.json();
+                
+                if (data.success) {
+                    autosData = data.data;
+                    mostrarAutos(autosData);
+                    actualizarStats(data.total);
+                    actualizarFiltrosActivos();
+                } else {
+                    throw new Error(data.error || 'Error desconocido');
                 }
-                
-                contenedor.innerHTML = autos.map(auto => `
-                    <div class="auto-card">
-                        <h3>${auto.marca} ${auto.modelo}</h3>
-                        <p><strong>Categoría:</strong> ${auto.tipo}</p>
-                        <p><strong>Transmisión:</strong> ${auto.transmision}</p>
-                        <p><strong>Pasajeros:</strong> ${auto.pasajeros}</p>
-                        <p><strong>Puertas:</strong> ${auto.puertas}</p>
-                        ${auto.año ? `<p><strong>Año:</strong> ${auto.año}</p>` : ''}
-                        <div class="precio">💰 $${auto.precio} MXN / día</div>
-                        <button class="btn-reservar" onclick="seleccionarAuto('${auto.vehiculo}')">
-                            Rentar este vehículo
+            } catch (error) {
+                console.error('Error cargando autos:', error);
+                document.getElementById('lista-autos').innerHTML = 
+                    '<div class="error-mensaje">❌ Error al cargar el catálogo. Intenta de nuevo más tarde.</div>';
+            }
+        }
+        
+        function mostrarAutos(autos) {
+            const container = document.getElementById('lista-autos');
+            
+            if (autos.length === 0) {
+                container.innerHTML = '<div class="no-resultados">😕 No se encontraron vehículos con esos filtros</div>';
+                return;
+            }
+            
+            container.innerHTML = autos.map(auto => `
+                <div class="auto-card">
+                    <div class="auto-imagen">
+                        🚗
+                    </div>
+                    <div class="auto-info">
+                        <div class="auto-titulo">${auto.marca} ${auto.modelo}</div>
+                        <div class="auto-precio">
+                            $${auto.precio.toLocaleString()}
+                            <small>/ día</small>
+                        </div>
+                        <div class="auto-detalles">
+                            <div class="detalle-item">
+                                <span>🚪</span> ${auto.puertas} puertas
+                            </div>
+                            <div class="detalle-item">
+                                <span>⚙️</span> ${auto.transmision}
+                            </div>
+                            <div class="detalle-item">
+                                <span>👥</span> ${auto.pasajeros} pasajeros
+                            </div>
+                            <div class="detalle-item">
+                                <span>📅</span> ${auto.año}
+                            </div>
+                        </div>
+                        <div class="detalle-item" style="margin-bottom: 15px;">
+                            <span>🏷️</span> ${auto.tipo}
+                        </div>
+                        <button class="btn-seleccionar" onclick="seleccionarAuto('${auto.vehiculo}')">
+                            Seleccionar este vehículo
                         </button>
                     </div>
-                `).join('');
-                
-            } catch (error) {
-                console.error('Error cargando catálogo:', error);
-                contenedor.innerHTML = '<div class="sin-resultados">❌ Error al cargar el catálogo. Intenta recargar la página.</div>';
+                </div>
+            `).join('');
+        }
+        
+        function actualizarStats(total) {
+            document.getElementById('stats').innerHTML = 
+                `📊 ${total} vehículos encontrados ${Object.keys(filtrosActuales).length > 0 ? '(filtrados)' : ''}`;
+        }
+        
+        function seleccionarAuto(vehiculo) {
+            // Guardar selección en localStorage
+            localStorage.setItem('autoSeleccionado', vehiculo);
+            
+            // Mostrar mensaje y regresar
+            alert(`✅ Has seleccionado: ${vehiculo}\n\nRegresa al chat y menciona este modelo para continuar con tu reserva.`);
+            
+            setTimeout(() => {
+                regresarAlChat();
+            }, 1000);
+        }
+        
+        function aplicarFiltros() {
+            filtrosActuales = {
+                tipo: document.getElementById('filtro-tipo').value,
+                marca: document.getElementById('filtro-marca').value,
+                transmision: document.getElementById('filtro-transmision').value,
+                precio_max: document.getElementById('filtro-precio').value,
+                pasajeros: document.getElementById('filtro-pasajeros').value,
+                search: document.getElementById('filtro-buscar').value
+            };
+            
+            // Eliminar filtros vacíos
+            Object.keys(filtrosActuales).forEach(key => {
+                if (!filtrosActuales[key]) delete filtrosActuales[key];
+            });
+            
+            cargarAutos();
+        }
+        
+        function limpiarFiltros() {
+            document.getElementById('filtro-tipo').value = '';
+            document.getElementById('filtro-marca').value = '';
+            document.getElementById('filtro-transmision').value = '';
+            document.getElementById('filtro-precio').value = '';
+            document.getElementById('filtro-pasajeros').value = '';
+            document.getElementById('filtro-buscar').value = '';
+            
+            filtrosActuales = {};
+            cargarAutos();
+        }
+        
+        function cargarFiltrosDesdeURL() {
+            const filtros = ['tipo', 'marca', 'transmision', 'precio_max', 'pasajeros'];
+            
+            filtros.forEach(filtro => {
+                const valor = urlParams.get(filtro);
+                if (valor) {
+                    filtrosActuales[filtro] = valor;
+                    
+                    // Actualizar campos
+                    const elemento = document.getElementById(`filtro-${filtro}`);
+                    if (elemento) elemento.value = valor;
+                }
+            });
+            
+            if (Object.keys(filtrosActuales).length > 0) {
+                cargarAutos();
             }
         }
         
-        // Función para regresar al chat (WhatsApp)
-        function seleccionarAuto(modeloCompleto) {
-            // Construir mensaje predefinido para enviar a WhatsApp
-            const mensaje = encodeURIComponent(`Me interesa el ${modeloCompleto}. Quiero continuar con la reserva.`);
-            // Número de WhatsApp de la empresa (debe configurarse en variable de entorno o fijo)
-            const numeroWhatsApp = '521234567890'; // Reemplazar con número real
-            window.open(`https://wa.me/${numeroWhatsApp}?text=${mensaje}`, '_blank');
+        function actualizarFiltrosActivos() {
+            const container = document.getElementById('filtros-activos');
+            const filtros = Object.entries(filtrosActuales);
+            
+            if (filtros.length === 0) {
+                container.innerHTML = '';
+                return;
+            }
+            
+            container.innerHTML = filtros.map(([key, value]) => `
+                <span class="filtro-tag">
+                    ${key}: ${value}
+                    <button onclick="eliminarFiltro('${key}')">×</button>
+                </span>
+            `).join('');
+        }
+        
+        function eliminarFiltro(key) {
+            delete filtrosActuales[key];
+            const elemento = document.getElementById(`filtro-${key}`);
+            if (elemento) elemento.value = '';
+            cargarAutos();
         }
         
         function regresarAlChat() {
             const ref = urlParams.get('ref');
-            if (ref === 'chatbot' && window.history.length > 1) {
-                window.history.back();
+            
+            if (ref === 'chatbot' || ref === 'chat') {
+                // Intentar volver a la app anterior
+                if (window.history.length > 1) {
+                    window.history.back();
+                } else {
+                    // Mostrar mensaje si no puede volver
+                    alert('✅ Regresa a tu aplicación de chat para continuar con la reserva.\n\nYa tienes los vehículos guardados en tu selección.');
+                }
             } else {
-                // Fallback: abrir WhatsApp con mensaje genérico
-                window.open('https://wa.me/521234567890?text=Hola%20AutoRent,%20quiero%20continuar%20con%20mi%20consulta.', '_blank');
+                window.location.href = 'https://t.me/tu_bot_telegram'; // Cambiar por tu link
             }
         }
         
-        // Iniciar carga
-        cargarAutos();
+        // Búsqueda en tiempo real con debounce
+        let timeoutId;
+        document.getElementById('filtro-buscar')?.addEventListener('input', (e) => {
+            clearTimeout(timeoutId);
+            timeoutId = setTimeout(() => {
+                aplicarFiltros();
+            }, 500);
+        });
     </script>
 </body>
 </html>
