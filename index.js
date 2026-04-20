@@ -2,6 +2,7 @@ require('dotenv').config();
 const express = require('express');
 const fetch = require('node-fetch');
 const Groq = require('groq-sdk');
+const nodemailer = require('nodemailer'); // 🔥 REINTEGRADO PARA CORREOS
 
 const app = express();
 app.use(express.json());
@@ -32,6 +33,40 @@ let cacheAutos = {
     lastUpdate: null,
     ttl: 10 * 60 * 1000
 };
+
+// ===============================
+// 🔹 FUNCIONES DE CORREO
+// ===============================
+async function enviarCorreoConfirmacion(correoDestino, reserva, cliente, folio) {
+    if (!process.env.SMTP_USER || !process.env.SMTP_PASS) {
+        console.log("⚠️ No se enviará correo: Credenciales SMTP no configuradas en .env");
+        return false;
+    }
+
+    try {
+        let transporter = nodemailer.createTransport({
+            host: process.env.SMTP_HOST || "smtp.gmail.com",
+            port: parseInt(process.env.SMTP_PORT) || 587,
+            secure: false,
+            auth: {
+                user: process.env.SMTP_USER,
+                pass: process.env.SMTP_PASS
+            }
+        });
+
+        await transporter.sendMail({
+            from: `"AutoRent" <${process.env.SMTP_USER}>`,
+            to: correoDestino,
+            subject: `🚗 Confirmación de Reserva - Folio: ${folio}`,
+            text: `¡Hola ${cliente.nombre}!\n\nTu reserva ha sido confirmada exitosamente en nuestro sistema.\n\n🚗 Vehículo: ${reserva.vehiculo}\n📅 Fechas: ${reserva.fecha_inicio} al ${reserva.fecha_fin}\n📋 Folio de confirmación: ${folio}\n\n¡Gracias por elegir AutoRent! Un asesor se pondrá en contacto contigo para los detalles de entrega.`
+        });
+        console.log(`📧 Correo enviado a ${correoDestino}`);
+        return true;
+    } catch (error) {
+        console.error("❌ Error enviando correo:", error);
+        return false;
+    }
+}
 
 // ===============================
 // 🔹 FUNCIONES DE BASE DE DATOS
@@ -130,25 +165,25 @@ function generarPromptSistema(autos) {
     return `Eres el asistente experto de AutoRent.
 
 REGLAS DE ORO:
-1. PROHIBIDO INVENTAR URLs: Usa EXACTAMENTE el texto "[LINK_AQUI]". El sistema lo reemplazará.
-2. PROHIBIDO INVENTAR FOLIOS: Usa EXACTAMENTE el texto "[FOLIO_AQUI]". El sistema lo reemplazará.
+1. NO ENLISTES AUTOS: NUNCA menciones modelos específicos de autos (como Toyota Corolla o Honda Civic) por tu cuenta. Solo diles que revisen el catálogo.
+2. PROHIBIDO INVENTAR FOLIOS.
 
 PROCESO 1: RENTAR UN AUTO
-- P1: Pregunta sus preferencias (Tipo de auto, pasajeros). Categorías disponibles: ${categoriasDisponibles}.
+- P1: Pregunta preferencias (Tipo de auto, manual/automático). Categorías: ${categoriasDisponibles}.
 - P2: Pide Nombre, Correo y Teléfono.
-- P3: Con datos y preferencias, cambia accion a "recomendar" y usa la etiqueta "[LINK_AQUI]". Pide que regrese a decirte el modelo.
-- P4: Cuando te dé el modelo, pide las FECHAS.
-- P5: Cuando tengas modelo y fechas, cambia accion a "guardar_reserva" y usa "[FOLIO_AQUI]" para confirmar.
+- P3: Cuando tengas los datos, cambia tu accion a "recomendar". Diles "Te he preparado un catálogo personalizado basado en tus preferencias." (El sistema agregará el link). Diles que regresen a escribirte el nombre exacto del modelo que elijan.
+- P4: Cuando te den el modelo exacto, pide las FECHAS.
+- P5: Cuando tengas modelo y fechas, cambia accion a "guardar_reserva".
 
 OTROS PROCESOS:
-- Catálogo: Dile "Aquí tienes nuestro catálogo: [LINK_AQUI]".
+- Catálogo: Dile que puede ver los autos en la página.
 - Cancelar: Pide su Folio. Cuando lo dé, cambia a "cancelar_reserva".
 - Requisitos: INE/Pasaporte, Licencia vigente, Tarjeta de Crédito, mayor de 21 años.
 - Soporte: Pide su teléfono para WhatsApp.
 
 FORMATO JSON OBLIGATORIO:
 {
-  "respuesta_usuario": "Tu mensaje usando [LINK_AQUI] o [FOLIO_AQUI] según corresponda...",
+  "respuesta_usuario": "Tu mensaje para el cliente...",
   "accion": "charlar" | "recomendar" | "guardar_reserva" | "cancelar_reserva",
   "datos_cliente": { "nombre": "", "correo": "", "telefono": "" },
   "datos_reserva": { "vehiculo": "", "fecha_inicio": "", "fecha_fin": "", "folio_a_cancelar": "" },
@@ -182,30 +217,23 @@ app.post('/webhook', async (req, res) => {
         const autos = await obtenerAutos(); 
         const promptSistema = generarPromptSistema(autos);
         
-        // ==========================================
-        // 🔥 INTERCEPTOR DEL MENÚ (BYPASS DE LA IA) 🔥
-        // ==========================================
+        // 🔥 BYPASS DEL MENÚ INICIAL 🔥
         const palabrasMenu = ['hola', 'menú', 'menu', 'inicio', 'buenos dias', 'buenas tardes', 'buenas noches', 'opciones'];
         
         if (!sesiones.has(sessionId) || palabrasMenu.includes(textoLimpio)) {
-            // Generamos la sesión si no existe
             gestionarSesion(sessionId, promptSistema);
             let historial = sesiones.get(sessionId);
 
-            // Texto estricto del menú desde Node.js
             const menuExacto = `¡Hola! Bienvenido a AutoRent 🚗. ¿Qué deseas hacer hoy?\n\n1️⃣ Rentar un Auto\n2️⃣ Ver Catálogo Completo\n3️⃣ Cancelar Reserva\n4️⃣ Requisitos para Rentar\n5️⃣ Soporte Técnico`;
 
-            // Le inyectamos esto al historial de la IA para que sepa lo que le dijimos al usuario
             historial.push({ role: "user", content: queryText });
             historial.push({ 
                 role: "assistant", 
                 content: JSON.stringify({ respuesta_usuario: menuExacto, accion: "charlar", datos_cliente: {}, datos_reserva: {}, preferencias_detectadas: {} }) 
             });
 
-            // Retornamos directamente sin gastar tokens ni preguntar a Groq
             return res.json({ fulfillmentMessages: [{ text: { text: [menuExacto] } }] });
         }
-        // ==========================================
 
         const historial = gestionarSesion(sessionId, promptSistema);
         historial.push({ role: "user", content: queryText });
@@ -220,13 +248,18 @@ app.post('/webhook', async (req, res) => {
         const respuestaIA = JSON.parse(completion.choices[0].message.content.trim());
         let respuestaFinal = respuestaIA.respuesta_usuario;
 
-        // ACCIÓN: RECOMENDAR
-        if (respuestaIA.accion === "recomendar" || respuestaFinal.includes("[LINK_AQUI]")) {
+        // 🔥 RED DE SEGURIDAD 1: FORZAR EL LINK EN "RECOMENDAR" 🔥
+        if (respuestaIA.accion === "recomendar") {
             const linkSeguro = generarLink(respuestaIA.preferencias_detectadas || {});
-            respuestaFinal = respuestaFinal.replace("[LINK_AQUI]", linkSeguro);
+            // Aunque la IA no lo haya puesto, nosotros lo anexamos al final por fuerza bruta
+            respuestaFinal += `\n\n🔗 *Revisa tu catálogo filtrado aquí:*\n${linkSeguro}\n\nCuando estés listo, regresa y dime el nombre del auto que quieres.`;
+        }
+        // Si no es recomendar, pero la IA puso [LINK_AQUI] por error, lo limpiamos o reemplazamos
+        else if (respuestaFinal.includes("[LINK_AQUI]")) {
+            respuestaFinal = respuestaFinal.replace("[LINK_AQUI]", CATALOGO_URL);
         }
 
-        // ACCIÓN: GUARDAR RESERVA
+        // 🔥 RED DE SEGURIDAD 2: FORZAR FOLIO Y ENVIAR CORREO EN "GUARDAR_RESERVA" 🔥
         if (respuestaIA.accion === "guardar_reserva") {
             const cliente = respuestaIA.datos_cliente || {};
             const reserva = respuestaIA.datos_reserva || {};
@@ -234,15 +267,23 @@ app.post('/webhook', async (req, res) => {
             if (cliente.nombre && reserva.vehiculo) {
                 const folio = await guardarReservaEnExcel(cliente, reserva);
                 if (folio) {
-                    respuestaFinal = respuestaFinal.replace("[FOLIO_AQUI]", `*${folio}*`);
+                    // Forzamos el folio en el texto final
+                    respuestaFinal += `\n\n✅ ¡Reserva confirmada!\nTu folio es: *${folio}*\n\nTe hemos enviado los detalles a tu correo electrónico.`;
+                    
+                    // DISPARAR CORREO
+                    if (cliente.correo) {
+                        await enviarCorreoConfirmacion(cliente.correo, reserva, cliente, folio);
+                    }
+
+                    // Seguro Anti-Loop
                     historial.push({
                         role: "system",
-                        content: "La reserva se guardó. PROHIBIDO usar 'guardar_reserva' de nuevo. Cambia a 'charlar'."
+                        content: "La reserva se guardó exitosamente. PROHIBIDO usar 'guardar_reserva' de nuevo. Cambia a 'charlar'."
                     });
                     respuestaIA.accion = "charlar"; 
                     respuestaIA.datos_reserva = {}; 
                 } else {
-                    respuestaFinal = "⚠️ Tuvimos un problema al generar el folio, un agente lo revisará.";
+                    respuestaFinal = "⚠️ Tuvimos un problema al generar el folio en la base de datos, un agente lo revisará pronto.";
                 }
             } else {
                 respuestaFinal = "Me faltó un dato. ¿Podrías confirmarme tu nombre, las fechas y el auto?";
