@@ -42,7 +42,81 @@ function eliminarAcentos(texto) {
 }
 
 // ===============================
-// 🔹 FUNCIÓN DE CORREO (CON MAPS)
+// 🔹 WHATSAPP (WHAPI) - CORREGIDO
+// ===============================
+async function enviarWhatsApp(numero, mensaje) {
+    const token = process.env.WHAPI_TOKEN;
+    
+    if (!token) {
+        console.warn("⚠️ WHAPI_TOKEN no configurado en .env");
+        return false;
+    }
+
+    try {
+        const numeroLimpio = String(numero).replace(/\D/g, '');
+        if (numeroLimpio.length < 10) {
+            console.error(`❌ Número inválido para WhatsApp: ${numero}`);
+            return false;
+        }
+
+        const chatId = `${numeroLimpio}@s.whatsapp.net`;
+        const mensajeLimitado = mensaje.length > 1000 ? mensaje.substring(0, 997) + '...' : mensaje;
+
+        const url = `https://gate.whapi.cloud/messages/text`;
+        const payload = {
+            to: chatId,
+            body: mensajeLimitado,
+            typing_time: 0
+        };
+
+        console.log(`📤 Enviando WhatsApp a ${numeroLimpio}...`);
+        
+        const response = await fetch(url, {
+            method: 'POST',
+            headers: {
+                'Accept': 'application/json',
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${token}`
+            },
+            body: JSON.stringify(payload)
+        });
+
+        if (response.ok) {
+            console.log(`✅ WhatsApp enviado a ${numeroLimpio}`);
+            return true;
+        } else {
+            const errorData = await response.json();
+            console.error(`❌ Error WHAPI:`, errorData);
+            
+            // Reintentar sin el sufijo
+            console.log(`   🔄 Reintentando sin sufijo @s.whatsapp.net...`);
+            const payloadAlt = { to: numeroLimpio, body: mensajeLimitado };
+            const responseAlt = await fetch(url, {
+                method: 'POST',
+                headers: {
+                    'Accept': 'application/json',
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${token}`
+                },
+                body: JSON.stringify(payloadAlt)
+            });
+            
+            if (responseAlt.ok) {
+                console.log(`✅ WhatsApp enviado (alternativo) a ${numeroLimpio}`);
+                return true;
+            } else {
+                console.error(`❌ También falló sin sufijo`);
+                return false;
+            }
+        }
+    } catch (error) {
+        console.error("❌ Error enviando WhatsApp:", error.message);
+        return false;
+    }
+}
+
+// ===============================
+// 🔹 CORREO ELECTRÓNICO (HTML + MAPS)
 // ===============================
 async function enviarCorreoConfirmacion(correoDestino, reserva, cliente, folio, direccion) {
     if (!process.env.SMTP_USER || !process.env.SMTP_PASS) {
@@ -179,7 +253,6 @@ function generarLink(preferencias = {}) {
     const params = new URLSearchParams();
     if (preferencias.marca) params.append('marca', preferencias.marca);
     
-    // Transmisión sin acentos y en minúsculas
     if (preferencias.transmision) {
         const transmisionNormalizada = eliminarAcentos(preferencias.transmision).toLowerCase();
         params.append('transmision', transmisionNormalizada);
@@ -251,7 +324,6 @@ app.get('/api/autos', async (req, res) => {
         
         if (marca) resultados = resultados.filter(a => a.marca.toLowerCase().includes(marca.toLowerCase()));
         
-        // Filtrar por transmisión sin acentos
         if (transmision) {
             const transmisionNormalizada = eliminarAcentos(transmision).toLowerCase();
             resultados = resultados.filter(a => eliminarAcentos(a.transmision).toLowerCase() === transmisionNormalizada);
@@ -277,8 +349,8 @@ app.get('/api/metadata', async (req, res) => {
     try {
         const autos = await obtenerAutos();
         const marcas = [...new Set(autos.map(a => a.marca))].sort();
-        const transmisiones = [...new Set(autos.map(a => eliminarAcentos(a.transmision)))] // sin acentos
-            .map(t => t.charAt(0).toUpperCase() + t.slice(1).toLowerCase()) // capitalizar
+        const transmisiones = [...new Set(autos.map(a => eliminarAcentos(a.transmision)))]
+            .map(t => t.charAt(0).toUpperCase() + t.slice(1).toLowerCase())
             .sort();
         res.json({ success: true, data: { marcas, transmisiones } });
     } catch (error) {
@@ -366,7 +438,7 @@ app.post('/webhook', async (req, res) => {
             }
         }
 
-        // Flujo de preferencias
+        // PREGUNTANDO PUERTAS
         if (session.estado === 'preguntando_puertas') {
             const match = queryText.match(/\b([2-5])\b/);
             if (match) {
@@ -381,6 +453,7 @@ app.post('/webhook', async (req, res) => {
             }
         }
 
+        // PREGUNTANDO ASIENTOS
         if (session.estado === 'preguntando_asientos') {
             const match = queryText.match(/\b([2-9])\b/);
             if (match) {
@@ -395,9 +468,9 @@ app.post('/webhook', async (req, res) => {
             }
         }
 
+        // PREGUNTANDO TRANSMISIÓN
         if (session.estado === 'preguntando_transmision') {
             let transmision = null;
-            // Detectar sin acentos
             if (textoLimpio.includes('automatica') || textoLimpio.includes('auto')) transmision = 'Automática';
             else if (textoLimpio.includes('estandar') || textoLimpio.includes('manual')) transmision = 'Estándar';
             
@@ -407,7 +480,6 @@ app.post('/webhook', async (req, res) => {
                 const autosFiltrados = autos.filter(a => {
                     if (session.preferencias.puertas && a.puertas !== session.preferencias.puertas) return false;
                     if (session.preferencias.pasajeros && a.pasajeros < session.preferencias.pasajeros) return false;
-                    // Comparar transmisión sin acentos
                     if (session.preferencias.transmision && eliminarAcentos(a.transmision).toLowerCase() !== eliminarAcentos(session.preferencias.transmision).toLowerCase()) return false;
                     return true;
                 });
@@ -436,9 +508,114 @@ app.post('/webhook', async (req, res) => {
             }
         }
 
-        // Resto del flujo (esperando_modelo, esperando_datos_contacto, esperando_fechas, esperando_direccion, cancelar_pedir_folio)
-        // ... (MANTENER EL CÓDIGO EXACTAMENTE IGUAL QUE EN LA RESPUESTA ANTERIOR)
-        // [Aquí va el mismo código de la respuesta anterior para esos estados]
+        // ESPERANDO MODELO
+        if (session.estado === 'esperando_modelo') {
+            const autoEncontrado = autos.find(a => 
+                queryText.toLowerCase().includes(a.modelo.toLowerCase()) || 
+                queryText.toLowerCase().includes(a.marca.toLowerCase() + ' ' + a.modelo.toLowerCase())
+            );
+            
+            if (autoEncontrado) {
+                session.autoSeleccionado = autoEncontrado;
+                session.estado = 'esperando_datos_contacto';
+                
+                const resp = `Excelente elección: ${autoEncontrado.vehiculo}.\n\nPara continuar con la reserva, necesito tus datos:\n- Nombre completo\n- Correo electrónico\n- Teléfono de contacto\n\nPor favor, proporciónalos en un solo mensaje (ej: Juan Pérez, juan@mail.com, 5512345678).`;
+                session.historial.push({ role: "assistant", content: resp });
+                return res.json({ fulfillmentText: resp });
+            } else {
+                const resp = `No encontré ese modelo. ¿Podrías verificarlo en el catálogo? ${generarLink(session.preferencias)}`;
+                return res.json({ fulfillmentText: resp });
+            }
+        }
+
+        // ESPERANDO DATOS DE CONTACTO
+        if (session.estado === 'esperando_datos_contacto') {
+            if (session.datosCliente.nombre && session.datosCliente.correo && session.datosCliente.telefono) {
+                session.estado = 'esperando_fechas';
+                const resp = `Gracias ${session.datosCliente.nombre}. Ahora necesito las fechas de renta para el ${session.autoSeleccionado.vehiculo}:\n📅 Fecha de inicio (DD/MM/AAAA)\n📅 Fecha de fin (DD/MM/AAAA)`;
+                return res.json({ fulfillmentText: resp });
+            } else {
+                const resp = "Necesito nombre, correo y teléfono. Por favor, envíalos juntos (ej: Juan Pérez, juan@mail.com, 5512345678).";
+                return res.json({ fulfillmentText: resp });
+            }
+        }
+
+        // ESPERANDO FECHAS
+        if (session.estado === 'esperando_fechas') {
+            const fechasMatch = queryText.match(/(\d{1,2}\/\d{1,2}\/\d{4}).*?(\d{1,2}\/\d{1,2}\/\d{4})/);
+            if (fechasMatch) {
+                const fechaInicio = fechasMatch[1];
+                const fechaFin = fechasMatch[2];
+                
+                const inicio = new Date(fechaInicio.split('/').reverse().join('-'));
+                const fin = new Date(fechaFin.split('/').reverse().join('-'));
+                if (isNaN(inicio) || isNaN(fin) || fin <= inicio) {
+                    return res.json({ fulfillmentText: "Fechas inválidas. Asegúrate de que la fecha fin sea posterior a la de inicio." });
+                }
+                
+                session.reserva = {
+                    vehiculo: session.autoSeleccionado.vehiculo,
+                    fecha_inicio: fechaInicio,
+                    fecha_fin: fechaFin,
+                    dias: Math.ceil((fin - inicio) / (1000 * 60 * 60 * 24))
+                };
+                session.reserva.precio_total = session.reserva.dias * session.autoSeleccionado.precio;
+                
+                session.estado = 'esperando_direccion';
+                const resp = `Perfecto. Por último, ¿cuál es la dirección donde quieres recibir el vehículo? (Calle, número, ciudad)`;
+                return res.json({ fulfillmentText: resp });
+            } else {
+                return res.json({ fulfillmentText: "Por favor, proporciona las fechas en formato DD/MM/AAAA al DD/MM/AAAA" });
+            }
+        }
+
+        // ESPERANDO DIRECCIÓN
+        if (session.estado === 'esperando_direccion') {
+            session.direccionEntrega = queryText;
+            
+            const cliente = {
+                nombre: session.datosCliente.nombre || "Cliente",
+                telefono: session.datosCliente.telefono || "0000000000",
+                correo: session.datosCliente.correo || "noemail@example.com"
+            };
+            
+            const folio = await guardarReservaEnExcel(cliente, session.reserva, session.direccionEntrega);
+            if (folio) {
+                let resp = `✅ ¡Reserva confirmada!\n\n`;
+                resp += `🚗 Vehículo: ${session.reserva.vehiculo}\n`;
+                resp += `📅 Fechas: ${session.reserva.fecha_inicio} al ${session.reserva.fecha_fin}\n`;
+                resp += `⏱️ Días: ${session.reserva.dias}\n`;
+                resp += `💰 Total: $${session.reserva.precio_total}\n`;
+                resp += `📍 Dirección: ${session.direccionEntrega}\n`;
+                resp += `📋 Folio: ${folio}\n\n`;
+                resp += `Te hemos enviado los detalles a tu correo y WhatsApp. ¡Gracias por elegir AutoRent!`;
+                
+                if (session.datosCliente.correo) {
+                    await enviarCorreoConfirmacion(session.datosCliente.correo, session.reserva, cliente, folio, session.direccionEntrega);
+                }
+                if (session.datosCliente.telefono) {
+                    const mensajeWpp = `✅ *Reserva Confirmada*\n\n🚗 *Vehículo:* ${session.reserva.vehiculo}\n📅 *Fechas:* ${session.reserva.fecha_inicio} - ${session.reserva.fecha_fin}\n💰 *Total:* $${session.reserva.precio_total}\n📍 *Dirección:* ${session.direccionEntrega}\n📋 *Folio:* ${folio}\n\n¡Gracias por elegir AutoRent!`;
+                    await enviarWhatsApp(session.datosCliente.telefono, mensajeWpp);
+                }
+                
+                session.estado = 'inicio';
+                return res.json({ fulfillmentText: resp });
+            } else {
+                return res.json({ fulfillmentText: "Hubo un error al guardar la reserva. Intenta de nuevo más tarde." });
+            }
+        }
+
+        // CANCELACIÓN
+        if (session.estado === 'cancelar_pedir_folio') {
+            const folio = queryText.trim().toUpperCase();
+            const cancelado = await cancelarReservaEnExcel(folio);
+            if (cancelado) {
+                session.estado = 'inicio';
+                return res.json({ fulfillmentText: `✅ Reserva ${folio} cancelada exitosamente.` });
+            } else {
+                return res.json({ fulfillmentText: `No se pudo cancelar. Verifica el folio.` });
+            }
+        }
 
         // Fallback IA
         const respuestaIA = await responderConIA(session, queryText);
