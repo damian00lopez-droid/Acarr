@@ -42,7 +42,7 @@ function eliminarAcentos(texto) {
 }
 
 // ===============================
-// 🔹 WHATSAPP (WHAPI) - CORREGIDO
+// 🔹 WHATSAPP (WHAPI) - CORREGIDO Y CON LOGS
 // ===============================
 async function enviarWhatsApp(numero, mensaje) {
     const token = process.env.WHAPI_TOKEN;
@@ -59,18 +59,22 @@ async function enviarWhatsApp(numero, mensaje) {
             return false;
         }
 
-        // WHAPI acepta el número sin el sufijo @s.whatsapp.net en muchos casos
-        const chatId = numeroLimpio;
-        const mensajeLimitado = mensaje.length > 1000 ? mensaje.substring(0, 997) + '...' : mensaje;
+        // WHAPI espera el número con código de país, asumimos MX (+52)
+        // Si el usuario ya incluye '52', lo dejamos; si no, lo agregamos.
+        let chatId = numeroLimpio;
+        if (!chatId.startsWith('52') && chatId.length === 10) {
+            chatId = '52' + chatId;
+        }
 
-        const url = `https://gate.whapi.cloud/messages/text`;
+        const url = 'https://gate.whapi.cloud/messages/text';
         const payload = {
             to: chatId,
-            body: mensajeLimitado
+            body: mensaje.length > 1000 ? mensaje.substring(0, 997) + '...' : mensaje
         };
 
-        console.log(`📤 Enviando WhatsApp a ${numeroLimpio}...`);
-        
+        console.log(`📤 Enviando WhatsApp a ${chatId} con WHAPI...`);
+        console.log(`   Payload:`, JSON.stringify(payload));
+
         const response = await fetch(url, {
             method: 'POST',
             headers: {
@@ -81,17 +85,18 @@ async function enviarWhatsApp(numero, mensaje) {
             body: JSON.stringify(payload)
         });
 
-        const responseData = await response.json();
-        
+        const responseText = await response.text();
+        console.log(`   Respuesta WHAPI (${response.status}):`, responseText);
+
         if (response.ok) {
             console.log(`✅ WhatsApp enviado a ${numeroLimpio}`);
             return true;
         } else {
-            console.error(`❌ Error WHAPI (${response.status}):`, responseData);
+            console.error(`❌ Error WHAPI: ${response.status} - ${responseText}`);
             
-            // Reintentar con el sufijo @s.whatsapp.net
-            console.log(`   🔄 Reintentando con sufijo @s.whatsapp.net...`);
-            const payloadAlt = { to: `${numeroLimpio}@s.whatsapp.net`, body: mensajeLimitado };
+            // Reintentar con formato alternativo (sin código de país extra)
+            console.log(`   🔄 Reintentando con número original sin modificar...`);
+            const payloadAlt = { to: numeroLimpio, body: payload.body };
             const responseAlt = await fetch(url, {
                 method: 'POST',
                 headers: {
@@ -102,12 +107,12 @@ async function enviarWhatsApp(numero, mensaje) {
                 body: JSON.stringify(payloadAlt)
             });
             
+            const responseAltText = await responseAlt.text();
             if (responseAlt.ok) {
                 console.log(`✅ WhatsApp enviado (alternativo) a ${numeroLimpio}`);
                 return true;
             } else {
-                const errorAlt = await responseAlt.json();
-                console.error(`❌ También falló con sufijo:`, errorAlt);
+                console.error(`❌ También falló: ${responseAlt.status} - ${responseAltText}`);
                 return false;
             }
         }
@@ -118,7 +123,7 @@ async function enviarWhatsApp(numero, mensaje) {
 }
 
 // ===============================
-// 🔹 CORREO ELECTRÓNICO (HTML + MAPS + DOCUMENTOS)
+// 🔹 CORREO ELECTRÓNICO (HTML + MAPS + TRANSFERENCIA)
 // ===============================
 async function enviarCorreoConfirmacion(correoDestino, reserva, cliente, folio, direccion) {
     if (!process.env.SMTP_USER || !process.env.SMTP_PASS) {
@@ -138,26 +143,33 @@ async function enviarCorreoConfirmacion(correoDestino, reserva, cliente, folio, 
         });
 
         const mapsLink = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(direccion)}`;
+        const clabe = "638180010085123365";
 
         const mailHTML = `
         <!DOCTYPE html>
         <html>
-        <head><meta charset="UTF-8"><style>body{font-family:Arial,sans-serif;background:#f4f7fc;padding:20px}.container{max-width:600px;margin:0 auto;background:#fff;border-radius:16px;box-shadow:0 4px 20px rgba(0,0,0,0.08);overflow:hidden}.header{background:linear-gradient(135deg,#667eea,#764ba2);padding:30px;color:#fff;text-align:center}.content{padding:30px}.info-box{background:#f8fafc;border-left:6px solid #667eea;padding:20px;border-radius:12px;margin:20px 0}.folio{background:#eef2ff;padding:15px;border-radius:12px;text-align:center;font-size:20px;color:#4f46e5;font-weight:700}.footer{background:#f1f5f9;padding:20px;text-align:center;color:#64748b}a{color:#667eea;font-weight:600;text-decoration:none}.documentos{background:#fff3cd;border-left:6px solid #ffc107;padding:15px;border-radius:12px;margin:20px 0}</style></head>
+        <head><meta charset="UTF-8"><style>body{font-family:Arial,sans-serif;background:#f4f7fc;padding:20px}.container{max-width:600px;margin:0 auto;background:#fff;border-radius:16px;box-shadow:0 4px 20px rgba(0,0,0,0.08);overflow:hidden}.header{background:linear-gradient(135deg,#667eea,#764ba2);padding:30px;color:#fff;text-align:center}.content{padding:30px}.info-box{background:#f8fafc;border-left:6px solid #667eea;padding:20px;border-radius:12px;margin:20px 0}.folio{background:#eef2ff;padding:15px;border-radius:12px;text-align:center;font-size:20px;color:#4f46e5;font-weight:700}.footer{background:#f1f5f9;padding:20px;text-align:center;color:#64748b}a{color:#667eea;font-weight:600;text-decoration:none}.documentos{background:#fff3cd;border-left:6px solid #ffc107;padding:15px;border-radius:12px;margin:20px 0}.pago{background:#d1e7dd;border-left:6px solid #198754;padding:15px;border-radius:12px;margin:20px 0}</style></head>
         <body><div class="container"><div class="header"><h1>🚗 Reserva Confirmada</h1><p>AutoRent · Tu viaje comienza aquí</p></div>
         <div class="content"><p>¡Hola ${cliente.nombre || 'Cliente'}!</p><p>Tu reserva ha sido registrada exitosamente.</p>
-        <div class="info-box"><p><strong>🚙 Vehículo:</strong> ${reserva.vehiculo}</p><p><strong>📅 Inicio:</strong> ${reserva.fecha_inicio}</p><p><strong>📅 Fin:</strong> ${reserva.fecha_fin}</p><p><strong>💰 Total:</strong> $${reserva.precio_total?.toLocaleString()}</p></div>
+        <div class="info-box"><p><strong>🚙 Vehículo:</strong> ${reserva.vehiculo}</p><p><strong>📅 Inicio:</strong> ${reserva.fecha_inicio}</p><p><strong>📅 Fin:</strong> ${reserva.fecha_fin}</p><p><strong>💰 Total a pagar:</strong> $${reserva.precio_total?.toLocaleString()}</p></div>
         <div class="folio">📋 Folio: ${folio}</div>
         <p><strong>📍 Dirección de entrega:</strong> ${direccion}</p>
         <p><a href="${mapsLink}">🗺️ Ver en Google Maps</a></p>
+        <div class="pago">
+            <p><strong>💳 FORMA DE PAGO:</strong></p>
+            <p>Para completar tu reserva, realiza una transferencia bancaria por el monto total a la siguiente CLABE:</p>
+            <p style="font-size:22px;font-weight:bold;background:#fff;padding:10px;border-radius:8px;text-align:center;margin:10px 0">${clabe}</p>
+            <p>Banco: <strong>Banorte</strong><br>
+            Beneficiario: <strong>AutoRent S.A. de C.V.</strong></p>
+            <p>Una vez realizada la transferencia, envía el comprobante a este mismo correo.</p>
+        </div>
         <div class="documentos">
             <p><strong>📄 DOCUMENTOS REQUERIDOS:</strong></p>
-            <p>Para completar tu renta, por favor envía los siguientes documentos a este mismo correo <strong>antes de la fecha de inicio</strong>:</p>
+            <p>Antes de la fecha de entrega, por favor envía a este correo:</p>
             <ul>
                 <li>✅ INE o Pasaporte vigente (por ambos lados)</li>
                 <li>✅ Licencia de conducir vigente</li>
-                <li>✅ Tarjeta de crédito (solo los últimos 4 dígitos y nombre del titular)</li>
             </ul>
-            <p>Puedes responder a este correo adjuntando las imágenes o documentos escaneados.</p>
         </div>
         <p>Presenta este folio y tu identificación al recoger el vehículo. ¡Gracias!</p></div>
         <div class="footer">© AutoRent · Correo automático</div></div></body></html>`;
@@ -167,7 +179,7 @@ async function enviarCorreoConfirmacion(correoDestino, reserva, cliente, folio, 
             to: correoDestino,
             subject: `✅ Confirmación de Reserva - Folio: ${folio}`,
             html: mailHTML,
-            text: `Hola ${cliente.nombre}, tu reserva (${folio}) para ${reserva.vehiculo} ha sido confirmada. Dirección: ${direccion}. Fechas: ${reserva.fecha_inicio} - ${reserva.fecha_fin}. Documentos requeridos: INE, licencia, tarjeta.`
+            text: `Hola ${cliente.nombre}, tu reserva (${folio}) para ${reserva.vehiculo} ha sido confirmada. Dirección: ${direccion}. Total a transferir: $${reserva.precio_total} a la CLABE ${clabe}. Documentos requeridos: INE, licencia.`
         });
 
         console.log(`📧 Correo enviado a ${correoDestino}`);
@@ -287,7 +299,7 @@ function inicializarSesion(sessionId) {
             historial: [],
             estado: 'inicio',
             preferencias: {},
-            datosCliente: {},
+            datosCliente: { nombre: null, correo: null, telefono: null },
             autoSeleccionado: null,
             direccionEntrega: null,
             lastActivity: Date.now()
@@ -383,19 +395,27 @@ app.post('/webhook', async (req, res) => {
         const session = inicializarSesion(sessionId);
         
         // ===== EXTRACCIÓN MEJORADA DE DATOS DE CONTACTO =====
-        const emailMatch = queryText.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/);
-        if (emailMatch) session.datosCliente.correo = emailMatch[0];
-        
-        const telefonoMatch = queryText.match(/\b\d{10,15}\b/);
-        if (telefonoMatch) session.datosCliente.telefono = telefonoMatch[0];
-        
-        // Extraer nombre: ignorar si contiene fechas o números largos
-        if (!emailMatch && !telefonoMatch && !queryText.match(/\d{1,2}\/\d{1,2}\/\d{4}/) && !queryText.match(/^\d+$/)) {
-            const palabras = queryText.split(/[\s,]+/).filter(p => p.length > 2 && !p.match(/^\d+$/));
-            if (palabras.length >= 2) {
-                session.datosCliente.nombre = palabras.slice(0, 2).join(' ');
-            } else if (palabras.length === 1) {
-                session.datosCliente.nombre = palabras[0];
+        // Solo extraemos si el estado es 'esperando_datos_contacto' o es el primer mensaje con datos
+        if (session.estado === 'esperando_datos_contacto' || session.estado === 'inicio') {
+            const emailMatch = queryText.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/);
+            if (emailMatch) session.datosCliente.correo = emailMatch[0];
+            
+            const telefonoMatch = queryText.match(/\b\d{10,15}\b/);
+            if (telefonoMatch) session.datosCliente.telefono = telefonoMatch[0];
+            
+            // Nombre: tomar las primeras palabras que no sean email, teléfono, números o fechas
+            if (!emailMatch && !telefonoMatch) {
+                const partes = queryText.split(/[\s,]+/);
+                const posiblesNombres = partes.filter(p => 
+                    p.length > 2 && 
+                    !p.match(/^\d+$/) && 
+                    !p.match(/\d{1,2}\/\d{1,2}\/\d{4}/)
+                );
+                if (posiblesNombres.length >= 2) {
+                    session.datosCliente.nombre = posiblesNombres.slice(0, 2).join(' ');
+                } else if (posiblesNombres.length === 1) {
+                    session.datosCliente.nombre = posiblesNombres[0];
+                }
             }
         }
 
@@ -406,6 +426,7 @@ app.post('/webhook', async (req, res) => {
             session.preferencias = {};
             session.autoSeleccionado = null;
             session.direccionEntrega = null;
+            session.datosCliente = { nombre: null, correo: null, telefono: null };
             
             const menu = `¡Hola! Bienvenido a AutoRent 🚗\n\n¿Qué deseas hacer hoy?\n1️⃣ Rentar un Auto\n2️⃣ Ver Catálogo Completo\n3️⃣ Cancelar Reserva\n4️⃣ Requisitos para Rentar\n5️⃣ Soporte Técnico`;
             
@@ -438,7 +459,7 @@ app.post('/webhook', async (req, res) => {
             }
             else if (textoLimpio === '4' || textoLimpio.includes('requisito')) {
                 session.estado = 'mostrando_requisitos';
-                const resp = "📋 Requisitos para rentar:\n• INE/Pasaporte vigente\n• Licencia de conducir vigente\n• Tarjeta de crédito (garantía)\n• Mayor de 21 años\n\n¿Te gustaría rentar un auto ahora? (Responde 'Sí' o 'No')";
+                const resp = "📋 Requisitos para rentar:\n• INE/Pasaporte vigente\n• Licencia de conducir vigente\n• Pago mediante transferencia bancaria (CLABE: 638180010085123365)\n• Mayor de 21 años\n\n¿Te gustaría rentar un auto ahora? (Responde 'Sí' o 'No')";
                 session.historial.push({ role: "assistant", content: resp });
                 return res.json({ fulfillmentText: resp });
             }
@@ -548,6 +569,7 @@ app.post('/webhook', async (req, res) => {
             if (autoEncontrado) {
                 session.autoSeleccionado = autoEncontrado;
                 session.estado = 'esperando_datos_contacto';
+                session.datosCliente = { nombre: null, correo: null, telefono: null }; // Resetear para recibir nuevos datos
                 
                 const resp = `Excelente elección: ${autoEncontrado.vehiculo}.\n\nPara continuar con la reserva, necesito tus datos:\n- Nombre completo\n- Correo electrónico\n- Teléfono de contacto\n\nPor favor, proporciónalos en un solo mensaje (ej: Juan Pérez, juan@mail.com, 5512345678).`;
                 session.historial.push({ role: "assistant", content: resp });
@@ -560,6 +582,7 @@ app.post('/webhook', async (req, res) => {
 
         // ESPERANDO DATOS DE CONTACTO
         if (session.estado === 'esperando_datos_contacto') {
+            // Ya extrajimos al inicio; ahora verificamos que estén los tres campos
             if (session.datosCliente.nombre && session.datosCliente.correo && session.datosCliente.telefono) {
                 session.estado = 'esperando_fechas';
                 const resp = `Gracias ${session.datosCliente.nombre}. Ahora necesito las fechas de renta para el ${session.autoSeleccionado.vehiculo}:\n📅 Fecha de inicio (DD/MM/AAAA)\n📅 Fecha de fin (DD/MM/AAAA)`;
@@ -603,7 +626,7 @@ app.post('/webhook', async (req, res) => {
         if (session.estado === 'esperando_direccion') {
             session.direccionEntrega = queryText;
             
-            // Asegurar que el nombre del cliente no sea la dirección
+            // Asegurar que el nombre del cliente esté definido
             const cliente = {
                 nombre: session.datosCliente.nombre || "Cliente",
                 telefono: session.datosCliente.telefono || "0000000000",
@@ -625,7 +648,7 @@ app.post('/webhook', async (req, res) => {
                     await enviarCorreoConfirmacion(session.datosCliente.correo, session.reserva, cliente, folio, session.direccionEntrega);
                 }
                 if (session.datosCliente.telefono) {
-                    const mensajeWpp = `✅ *Reserva Confirmada*\n\n🚗 *Vehículo:* ${session.reserva.vehiculo}\n📅 *Fechas:* ${session.reserva.fecha_inicio} - ${session.reserva.fecha_fin}\n💰 *Total:* $${session.reserva.precio_total}\n📍 *Dirección:* ${session.direccionEntrega}\n📋 *Folio:* ${folio}\n\n¡Gracias por elegir AutoRent!`;
+                    const mensajeWpp = `✅ *Reserva Confirmada*\n\n🚗 *Vehículo:* ${session.reserva.vehiculo}\n📅 *Fechas:* ${session.reserva.fecha_inicio} - ${session.reserva.fecha_fin}\n💰 *Total:* $${session.reserva.precio_total}\n📍 *Dirección:* ${session.direccionEntrega}\n📋 *Folio:* ${folio}\n\nRealiza transferencia a CLABE 638180010085123365 (Banorte). ¡Gracias!`;
                     await enviarWhatsApp(session.datosCliente.telefono, mensajeWpp);
                 }
                 
