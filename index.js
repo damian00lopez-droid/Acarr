@@ -42,30 +42,40 @@ function eliminarAcentos(texto) {
 }
 
 // ===============================
-// 🔹 WHATSAPP (WHAPI) - CORREGIDO Y CON LOGS
+// 🔹 WHATSAPP (WHAPI) - VERSIÓN MEJORADA
 // ===============================
 async function enviarWhatsApp(numero, mensaje) {
     const token = process.env.WHAPI_TOKEN;
-    
     if (!token) {
         console.warn("⚠️ WHAPI_TOKEN no configurado en .env");
         return false;
     }
 
     try {
-        const numeroLimpio = String(numero).replace(/\D/g, '');
-        if (numeroLimpio.length < 10) {
-            console.error(`❌ Número inválido para WhatsApp: ${numero}`);
+        // Limpiar número: solo dígitos
+        let rawNumber = String(numero).replace(/\D/g, '');
+        if (rawNumber.length < 10) {
+            console.error(`❌ Número inválido (menos de 10 dígitos): ${numero}`);
             return false;
         }
 
-        // WHAPI espera el número con código de país, asumimos MX (+52)
-        let chatId = numeroLimpio;
-        if (!chatId.startsWith('52') && chatId.length === 10) {
-            chatId = '52' + chatId;
+        // Formato internacional para México (52 + 10 dígitos)
+        let chatId = rawNumber;
+        if (!chatId.startsWith('52')) {
+            // Si tiene 10 dígitos, asumimos México
+            if (chatId.length === 10) {
+                chatId = '52' + chatId;
+            } 
+            // Si tiene 11 dígitos y empieza con 1 (ej: 521234567890)
+            else if (chatId.length === 11 && chatId.startsWith('1')) {
+                chatId = '52' + chatId.substring(1);
+            }
+        }
+        // Después de ajustar, si no tiene exactamente 12 dígitos, se advierte pero se intenta igual
+        if (chatId.length !== 12) {
+            console.warn(`⚠️ Número con formato inusual (${chatId.length} dígitos): ${chatId}, se enviará tal cual`);
         }
 
-        const url = 'https://gate.whapi.cloud/messages/text';
         const payload = {
             to: chatId,
             body: mensaje.length > 1000 ? mensaje.substring(0, 997) + '...' : mensaje
@@ -74,7 +84,7 @@ async function enviarWhatsApp(numero, mensaje) {
         console.log(`📤 Enviando WhatsApp a ${chatId} con WHAPI...`);
         console.log(`   Payload:`, JSON.stringify(payload));
 
-        const response = await fetch(url, {
+        const response = await fetch('https://gate.whapi.cloud/messages/text', {
             method: 'POST',
             headers: {
                 'Accept': 'application/json',
@@ -88,35 +98,14 @@ async function enviarWhatsApp(numero, mensaje) {
         console.log(`   Respuesta WHAPI (${response.status}):`, responseText);
 
         if (response.ok) {
-            console.log(`✅ WhatsApp enviado a ${numeroLimpio}`);
+            console.log(`✅ WhatsApp enviado a ${chatId}`);
             return true;
         } else {
             console.error(`❌ Error WHAPI: ${response.status} - ${responseText}`);
-            
-            // Reintentar con formato alternativo (sin modificar)
-            console.log(`   🔄 Reintentando con número original sin modificar...`);
-            const payloadAlt = { to: numeroLimpio, body: payload.body };
-            const responseAlt = await fetch(url, {
-                method: 'POST',
-                headers: {
-                    'Accept': 'application/json',
-                    'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${token}`
-                },
-                body: JSON.stringify(payloadAlt)
-            });
-            
-            const responseAltText = await responseAlt.text();
-            if (responseAlt.ok) {
-                console.log(`✅ WhatsApp enviado (alternativo) a ${numeroLimpio}`);
-                return true;
-            } else {
-                console.error(`❌ También falló: ${responseAlt.status} - ${responseAltText}`);
-                return false;
-            }
+            return false;
         }
     } catch (error) {
-        console.error("❌ Error enviando WhatsApp:", error.message);
+        console.error("❌ Excepción en enviarWhatsApp:", error.message);
         return false;
     }
 }
@@ -379,6 +368,18 @@ app.get('/api/metadata', async (req, res) => {
     } catch (error) {
         res.status(500).json({ success: false, error: "Error interno" });
     }
+});
+
+// ===============================
+// 🧪 ENDPOINT DE PRUEBA PARA WHATSAPP
+// ===============================
+app.post('/test-whatsapp', express.json(), async (req, res) => {
+    const { numero, mensaje } = req.body;
+    if (!numero || !mensaje) {
+        return res.status(400).json({ error: "Faltan 'numero' o 'mensaje'" });
+    }
+    const enviado = await enviarWhatsApp(numero, mensaje);
+    res.json({ success: enviado, numero, mensaje: mensaje.substring(0, 100) });
 });
 
 // ===============================
@@ -661,12 +662,14 @@ app.post('/webhook', async (req, res) => {
                 resp += `📋 Folio: ${folio}\n\n`;
                 resp += `Te hemos enviado los detalles a tu correo y WhatsApp. ¡Gracias por elegir AutoRent!`;
                 
+                // Enviar correo (sin esperar a que termine)
                 if (session.datosCliente.correo) {
-                    await enviarCorreoConfirmacion(session.datosCliente.correo, session.reserva, cliente, folio, session.direccionEntrega);
+                    enviarCorreoConfirmacion(session.datosCliente.correo, session.reserva, cliente, folio, session.direccionEntrega).catch(err => console.error("Error correo:", err));
                 }
+                // Enviar WhatsApp (sin esperar)
                 if (session.datosCliente.telefono) {
                     const mensajeWpp = `✅ *Reserva Confirmada*\n\n🚗 *Vehículo:* ${session.reserva.vehiculo}\n📅 *Fechas:* ${session.reserva.fecha_inicio} - ${session.reserva.fecha_fin}\n💰 *Total:* $${session.reserva.precio_total}\n📍 *Dirección:* ${session.direccionEntrega}\n📋 *Folio:* ${folio}\n\nRealiza transferencia a CLABE 638180010085123365 (Banorte). ¡Gracias!`;
-                    await enviarWhatsApp(session.datosCliente.telefono, mensajeWpp);
+                    enviarWhatsApp(session.datosCliente.telefono, mensajeWpp).catch(err => console.error("Error WhatsApp:", err));
                 }
                 
                 session.estado = 'inicio';
@@ -702,4 +705,5 @@ app.listen(port, () => {
     console.log(`🚀 AutoRent Webhook corriendo en puerto ${port}`);
     console.log(`📁 Archivos estáticos servidos desde /public`);
     console.log(`🔗 Catálogo: ${CATALOGO_URL}`);
+    console.log(`🧪 Endpoint de prueba WhatsApp: POST /test-whatsapp`);
 });
