@@ -42,14 +42,14 @@ function eliminarAcentos(texto) {
 }
 
 // ===============================
-// 🔹 WHATSAPP (GREEN API) - NUEVA VERSIÓN
+// 🔹 WHATSAPP (GREEN API)
 // ===============================
 async function enviarWhatsApp(numero, mensaje) {
-    const idInstance = process.env.GREEN_API_ID_INSTANCE;
-    const apiToken = process.env.GREEN_API_TOKEN_INSTANCE;
-
-    if (!idInstance || !apiToken) {
-        console.warn("⚠️ GREEN_API_ID_INSTANCE o GREEN_API_TOKEN_INSTANCE no configurados en .env");
+    const instance = process.env.GREEN_API_INSTANCE;
+    const token = process.env.GREEN_API_TOKEN;
+    
+    if (!instance || !token) {
+        console.warn("⚠️ GREEN_API_INSTANCE o GREEN_API_TOKEN no configurados en .env");
         return false;
     }
 
@@ -70,36 +70,34 @@ async function enviarWhatsApp(numero, mensaje) {
                 chatId = '52' + chatId.substring(1);
             }
         }
-        // Green API espera el número con código de país, sin '+' y sin espacios
-        if (chatId.length !== 12) {
-            console.warn(`⚠️ Número con formato inusual (${chatId.length} dígitos): ${chatId}, se enviará tal cual`);
-        }
 
-        const url = `https://api.green-api.com/waInstance${idInstance}/sendMessage/${apiToken}`;
+        // Green API requiere el número con @c.us al final
+        const chatIdGreen = `${chatId}@c.us`;
+        const url = `https://api.green-api.com/waInstance${instance}/sendMessage/${token}`;
+        
         const payload = {
-            chatId: `${chatId}@c.us`,
+            chatId: chatIdGreen,
             message: mensaje.length > 1000 ? mensaje.substring(0, 997) + '...' : mensaje
         };
 
-        console.log(`📤 Enviando WhatsApp a ${chatId} mediante Green API...`);
+        console.log(`📤 Enviando WhatsApp a ${chatIdGreen} mediante Green API...`);
+        console.log(`   URL: ${url}`);
         console.log(`   Payload:`, JSON.stringify(payload));
 
         const response = await fetch(url, {
             method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
+            headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(payload)
         });
 
         const responseData = await response.json();
-        console.log(`   Respuesta Green API (${response.status}):`, JSON.stringify(responseData));
+        console.log(`   Respuesta Green API (${response.status}):`, responseData);
 
         if (response.ok && responseData.idMessage) {
-            console.log(`✅ WhatsApp enviado a ${chatId}, idMessage: ${responseData.idMessage}`);
+            console.log(`✅ WhatsApp enviado correctamente. ID: ${responseData.idMessage}`);
             return true;
         } else {
-            console.error(`❌ Error Green API: ${response.status} - ${responseData.error || responseData.message || 'Error desconocido'}`);
+            console.error(`❌ Error Green API: ${response.status} - ${JSON.stringify(responseData)}`);
             return false;
         }
     } catch (error) {
@@ -369,7 +367,7 @@ app.get('/api/metadata', async (req, res) => {
 });
 
 // ===============================
-// 🧪 ENDPOINT DE PRUEBA PARA GREEN API WHATSAPP
+// 🧪 ENDPOINT DE PRUEBA PARA WHATSAPP (GREEN API)
 // ===============================
 app.post('/test-whatsapp', express.json(), async (req, res) => {
     const { numero, mensaje } = req.body;
