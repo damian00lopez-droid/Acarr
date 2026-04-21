@@ -3,10 +3,11 @@ const express = require('express');
 const fetch = require('node-fetch');
 const Groq = require('groq-sdk');
 const nodemailer = require('nodemailer');
+const path = require('path');
 
 const app = express();
 app.use(express.json());
-app.use(express.static('public'));
+app.use(express.static('public')); // Servir catálogo y otros estáticos
 
 const port = process.env.PORT || 3000;
 const sheetdbUrl = process.env.SHEETDB_URL;
@@ -14,7 +15,7 @@ const sheetdbUrl = process.env.SHEETDB_URL;
 // ===============================
 // 🔥 CONFIGURACIÓN
 // ===============================
-const CATALOGO_URL = "https://acarr-v3a2.onrender.com/catalogo.html";
+const CATALOGO_URL = process.env.CATALOGO_URL || "https://acarr-v3a2.onrender.com/catalogo.html";
 const MAX_HISTORIAL = 14;
 
 const RAW_KEY = process.env.GROQ_API_KEY || "";
@@ -28,6 +29,7 @@ if (!CLEAN_KEY) {
 const groq = new Groq({ apiKey: CLEAN_KEY });
 const sesiones = new Map();
 
+// Cache de autos (TTL 10 minutos)
 let cacheAutos = {
     data: [],
     lastUpdate: null,
@@ -35,11 +37,11 @@ let cacheAutos = {
 };
 
 // ===============================
-// 🔹 FUNCIONES DE CORREO
+// 🔹 FUNCIÓN DE CORREO (HTML MEJORADO)
 // ===============================
 async function enviarCorreoConfirmacion(correoDestino, reserva, cliente, folio) {
     if (!process.env.SMTP_USER || !process.env.SMTP_PASS) {
-        console.log("⚠️ No se enviará correo: Credenciales SMTP no configuradas");
+        console.log("⚠️ Credenciales SMTP no configuradas. No se enviará correo.");
         return false;
     }
 
@@ -54,12 +56,24 @@ async function enviarCorreoConfirmacion(correoDestino, reserva, cliente, folio) 
             }
         });
 
+        const mailHTML = `
+        <!DOCTYPE html>
+        <html>
+        <head><meta charset="UTF-8"><style>body{font-family:Arial,sans-serif;background:#f4f7fc;padding:20px}.container{max-width:600px;margin:0 auto;background:#fff;border-radius:16px;box-shadow:0 4px 20px rgba(0,0,0,0.08);overflow:hidden}.header{background:linear-gradient(135deg,#667eea,#764ba2);padding:30px;color:#fff;text-align:center}.content{padding:30px}.info-box{background:#f8fafc;border-left:6px solid #667eea;padding:20px;border-radius:12px;margin:20px 0}.folio{background:#eef2ff;padding:15px;border-radius:12px;text-align:center;font-size:20px;color:#4f46e5;font-weight:700}.footer{background:#f1f5f9;padding:20px;text-align:center;color:#64748b}</style></head>
+        <body><div class="container"><div class="header"><h1>🚗 Reserva Confirmada</h1><p>AutoRent · Tu viaje comienza aquí</p></div>
+        <div class="content"><p>¡Hola ${cliente.nombre || 'Cliente'}!</p><p>Tu reserva ha sido registrada exitosamente.</p>
+        <div class="info-box"><p><strong>🚙 Vehículo:</strong> ${reserva.vehiculo}</p><p><strong>📅 Inicio:</strong> ${reserva.fecha_inicio}</p><p><strong>📅 Fin:</strong> ${reserva.fecha_fin}</p><p><strong>💰 Total:</strong> $${reserva.precio_total?.toLocaleString()}</p></div>
+        <div class="folio">📋 Folio: ${folio}</div><p>Presenta este folio al recoger el vehículo. ¡Gracias!</p></div>
+        <div class="footer">© AutoRent · Correo automático</div></div></body></html>`;
+
         await transporter.sendMail({
-            from: `"AutoRent" <${process.env.SMTP_USER}>`,
+            from: `"AutoRent 🚗" <${process.env.SMTP_USER}>`,
             to: correoDestino,
-            subject: `🚗 Confirmación de Reserva - Folio: ${folio}`,
-            text: `¡Hola ${cliente.nombre}!\n\nTu reserva ha sido confirmada exitosamente.\n\n🚗 Vehículo: ${reserva.vehiculo}\n📅 Fechas: ${reserva.fecha_inicio} al ${reserva.fecha_fin}\n📋 Folio: ${folio}\n\n¡Gracias por elegir AutoRent!`
+            subject: `✅ Confirmación de Reserva - Folio: ${folio}`,
+            html: mailHTML,
+            text: `Hola ${cliente.nombre}, tu reserva (${folio}) para ${reserva.vehiculo} ha sido confirmada. Fechas: ${reserva.fecha_inicio} - ${reserva.fecha_fin}.`
         });
+
         console.log(`📧 Correo enviado a ${correoDestino}`);
         return true;
     } catch (error) {
@@ -69,11 +83,11 @@ async function enviarCorreoConfirmacion(correoDestino, reserva, cliente, folio) 
 }
 
 // ===============================
-// 🔹 FUNCIONES DE BASE DE DATOS
+// 🔹 OBTENER AUTOS (CON CACHÉ)
 // ===============================
 async function obtenerAutos() {
     try {
-        if (cacheAutos.data.length > 0 && cacheAutos.lastUpdate && (Date.now() - cacheAutos.lastUpdate) < cacheAutos.ttl) {
+        if (cacheAutos.data.length && cacheAutos.lastUpdate && (Date.now() - cacheAutos.lastUpdate) < cacheAutos.ttl) {
             return cacheAutos.data;
         }
 
@@ -105,10 +119,12 @@ async function obtenerAutos() {
     }
 }
 
+// ===============================
+// 🔹 GUARDAR / CANCELAR EN EXCEL
+// ===============================
 async function guardarReservaEnExcel(cliente, reserva) {
     try {
         const folio = `AR-${Date.now().toString(36).toUpperCase()}`;
-        
         const registro = {
             Nombre: cliente.nombre,
             Telefono: cliente.telefono || "No proporcionado",
@@ -116,21 +132,17 @@ async function guardarReservaEnExcel(cliente, reserva) {
             Modelo: reserva.vehiculo,
             Fecha_Inicio: reserva.fecha_inicio,
             Fecha_Fin: reserva.fecha_fin,
-            Extras: "", 
             Folio: folio,
             Estado: 'Confirmado'
         };
-
         const res = await fetch(`${sheetdbUrl}?sheet=Reservas`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ data: [registro] })
         });
-
-        if (res.ok) return folio;
-        return null;
+        return res.ok ? folio : null;
     } catch (error) {
-        console.error("❌ Error guardando en Excel:", error);
+        console.error("❌ Error guardando:", error);
         return null;
     }
 }
@@ -140,20 +152,20 @@ async function cancelarReservaEnExcel(folio) {
         const updateResponse = await fetch(`${sheetdbUrl}/Folio/${folio}?sheet=Reservas`, {
             method: 'PATCH',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                data: { Estado: 'Cancelada' }
-            })
+            body: JSON.stringify({ data: { Estado: 'Cancelada' } })
         });
         return updateResponse.ok;
     } catch (error) {
-        console.error('❌ Error cancelando reserva:', error);
+        console.error('❌ Error cancelando:', error);
         return false;
     }
 }
 
+// ===============================
+// 🔹 GENERAR LINK CATÁLOGO
+// ===============================
 function generarLink(preferencias = {}) {
     const params = new URLSearchParams();
-    if (preferencias.tipo) params.append('tipo', preferencias.tipo);
     if (preferencias.marca) params.append('marca', preferencias.marca);
     if (preferencias.transmision) params.append('transmision', preferencias.transmision);
     if (preferencias.puertas) params.append('puertas', preferencias.puertas);
@@ -165,13 +177,13 @@ function generarLink(preferencias = {}) {
 }
 
 // ===============================
-// 🔹 GESTIÓN DE SESIONES CON ESTADO
+// 🔹 GESTIÓN DE SESIONES POR ESTADO
 // ===============================
 function inicializarSesion(sessionId) {
     if (!sesiones.has(sessionId)) {
         sesiones.set(sessionId, {
             historial: [],
-            estado: 'inicio', // inicio, preguntando_puertas, preguntando_asientos, preguntando_transmision, esperando_modelo, esperando_fechas
+            estado: 'inicio',
             preferencias: {},
             datosCliente: {},
             autoSeleccionado: null,
@@ -182,11 +194,41 @@ function inicializarSesion(sessionId) {
 }
 
 // ===============================
-// 🔹 PROMPT SISTEMA (Simplificado)
+// 🔹 ENDPOINTS API
 // ===============================
-function generarPromptSistema() {
-    return `Eres el asistente de AutoRent. El sistema ya maneja la lógica de renta paso a paso. Tu función es conversar naturalmente con el cliente basándote en el estado actual proporcionado en el contexto. NO inventes pasos extra. Sigue las indicaciones del sistema.`;
-}
+app.get('/api/autos', async (req, res) => {
+    try {
+        const autos = await obtenerAutos();
+        let resultados = [...autos];
+        const { marca, transmision, precio_max, pasajeros, puertas, search } = req.query;
+        if (marca) resultados = resultados.filter(a => a.marca.toLowerCase().includes(marca.toLowerCase()));
+        if (transmision) resultados = resultados.filter(a => a.transmision.toLowerCase().includes(transmision.toLowerCase()));
+        if (precio_max) resultados = resultados.filter(a => a.precio <= parseFloat(precio_max));
+        if (pasajeros) resultados = resultados.filter(a => a.pasajeros >= parseInt(pasajeros));
+        if (puertas) resultados = resultados.filter(a => a.puertas == parseInt(puertas));
+        if (search) {
+            resultados = resultados.filter(a => 
+                a.vehiculo.toLowerCase().includes(search.toLowerCase()) ||
+                a.marca.toLowerCase().includes(search.toLowerCase()) ||
+                a.modelo.toLowerCase().includes(search.toLowerCase())
+            );
+        }
+        res.json({ success: true, total: resultados.length, data: resultados });
+    } catch (error) {
+        res.status(500).json({ success: false, error: "Error interno" });
+    }
+});
+
+app.get('/api/metadata', async (req, res) => {
+    try {
+        const autos = await obtenerAutos();
+        const marcas = [...new Set(autos.map(a => a.marca))].sort();
+        const transmisiones = [...new Set(autos.map(a => a.transmision))].sort();
+        res.json({ success: true, data: { marcas, transmisiones } });
+    } catch (error) {
+        res.status(500).json({ success: false, error: "Error interno" });
+    }
+});
 
 // ===============================
 // 🚀 WEBHOOK PRINCIPAL
@@ -200,12 +242,15 @@ app.post('/webhook', async (req, res) => {
         const autos = await obtenerAutos();
         const session = inicializarSesion(sessionId);
         
-        // Extraer datos de contacto del mensaje (nombre, email, teléfono)
+        // Extraer datos de contacto
         const emailMatch = queryText.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/);
         if (emailMatch) session.datosCliente.correo = emailMatch[0];
         const telefonoMatch = queryText.match(/\b\d{10,15}\b/);
         if (telefonoMatch) session.datosCliente.telefono = telefonoMatch[0];
-        // Nombre: podríamos usar IA o simplemente guardar lo que diga
+        // Nombre: guardamos el texto si no hay email/telefono
+        if (!emailMatch && !telefonoMatch && queryText.length > 0) {
+            session.datosCliente.nombre = queryText;
+        }
 
         // 🔥 MENÚ INICIAL / REINICIO
         const palabrasMenu = ['hola', 'menú', 'menu', 'inicio', 'buenos dias', 'buenas tardes', 'buenas noches', 'opciones', 'reiniciar'];
@@ -216,16 +261,15 @@ app.post('/webhook', async (req, res) => {
             
             const menu = `¡Hola! Bienvenido a AutoRent 🚗\n\n¿Qué deseas hacer hoy?\n1️⃣ Rentar un Auto\n2️⃣ Ver Catálogo Completo\n3️⃣ Cancelar Reserva\n4️⃣ Requisitos para Rentar\n5️⃣ Soporte Técnico`;
             
-            session.historial = [{ role: "system", content: generarPromptSistema() }];
+            session.historial = [{ role: "system", content: "Eres el asistente de AutoRent." }];
             session.historial.push({ role: "user", content: queryText });
             session.historial.push({ role: "assistant", content: menu });
             
             return res.json({ fulfillmentMessages: [{ text: { text: [menu] } }] });
         }
 
-        // 🔥 MANEJO POR ESTADO (Lógica secuencial sin IA)
+        // 🔥 MANEJO POR ESTADO (sin IA para flujo principal)
         if (session.estado === 'inicio') {
-            // Opciones del menú
             if (textoLimpio === '1' || textoLimpio.includes('rentar')) {
                 session.estado = 'preguntando_puertas';
                 const resp = "Perfecto. Para recomendarte el auto ideal, necesito algunas preferencias:\n\n¿Cuántas puertas prefieres? (2, 4 o 5)";
@@ -253,10 +297,6 @@ app.post('/webhook', async (req, res) => {
                 const resp = "Un agente se comunicará contigo a la brevedad. Por favor, compártenos tu número de WhatsApp.";
                 session.historial.push({ role: "assistant", content: resp });
                 return res.json({ fulfillmentText: resp });
-            }
-            else {
-                // Intentar con IA para conversación general
-                // (código de fallback con Groq, similar al existente)
             }
         }
 
@@ -290,24 +330,22 @@ app.post('/webhook', async (req, res) => {
         }
 
         if (session.estado === 'preguntando_transmision') {
-            const txt = textoLimpio;
             let transmision = null;
-            if (txt.includes('autom') || txt.includes('auto')) transmision = 'Automática';
-            else if (txt.includes('estándar') || txt.includes('standard') || txt.includes('manual')) transmision = 'Estándar';
+            if (textoLimpio.includes('autom') || textoLimpio.includes('auto')) transmision = 'Automática';
+            else if (textoLimpio.includes('estándar') || textoLimpio.includes('standard') || textoLimpio.includes('manual')) transmision = 'Estándar';
             
             if (transmision) {
                 session.preferencias.transmision = transmision;
                 
-                // Generar link con filtros
-                const link = generarLink(session.preferencias);
-                
-                // También podemos filtrar autos para mostrar un resumen
+                // Filtrar autos para mostrar conteo
                 const autosFiltrados = autos.filter(a => {
                     if (session.preferencias.puertas && a.puertas !== session.preferencias.puertas) return false;
                     if (session.preferencias.pasajeros && a.pasajeros < session.preferencias.pasajeros) return false;
                     if (session.preferencias.transmision && a.transmision !== session.preferencias.transmision) return false;
                     return true;
                 });
+                
+                const link = generarLink(session.preferencias);
                 
                 let resp = `🎯 ¡Preferencias guardadas!\n\n`;
                 resp += `• Puertas: ${session.preferencias.puertas}\n`;
@@ -331,9 +369,8 @@ app.post('/webhook', async (req, res) => {
             }
         }
 
-        // Esperando que el usuario escriba el modelo del auto
+        // Esperando modelo de auto
         if (session.estado === 'esperando_modelo') {
-            // Buscar auto por nombre
             const autoEncontrado = autos.find(a => 
                 queryText.toLowerCase().includes(a.modelo.toLowerCase()) || 
                 queryText.toLowerCase().includes(a.marca.toLowerCase() + ' ' + a.modelo.toLowerCase())
@@ -343,17 +380,17 @@ app.post('/webhook', async (req, res) => {
                 session.autoSeleccionado = autoEncontrado;
                 session.estado = 'esperando_fechas';
                 
-                // Pedir datos de contacto si no los tenemos
+                // Si no tenemos datos de contacto, pedirlos primero
                 if (!session.datosCliente.nombre || !session.datosCliente.correo || !session.datosCliente.telefono) {
-                    const resp = `Excelente elección: ${autoEncontrado.vehiculo}.\n\nPara continuar con la reserva, necesito tus datos:\n- Nombre completo\n- Correo electrónico\n- Teléfono de contacto\n\nPor favor, proporciónalos.`;
                     session.estado = 'esperando_datos_contacto';
-                    session.historial.push({ role: "assistant", content: resp });
-                    return res.json({ fulfillmentText: resp });
-                } else {
-                    const resp = `Has seleccionado: ${autoEncontrado.vehiculo}.\n\nAhora necesito las fechas de renta:\n📅 Fecha de inicio (DD/MM/AAAA)\n📅 Fecha de fin (DD/MM/AAAA)\n\nEjemplo: 20/12/2024 al 25/12/2024`;
+                    const resp = `Excelente elección: ${autoEncontrado.vehiculo}.\n\nPara continuar con la reserva, necesito tus datos:\n- Nombre completo\n- Correo electrónico\n- Teléfono de contacto\n\nPor favor, proporciónalos.`;
                     session.historial.push({ role: "assistant", content: resp });
                     return res.json({ fulfillmentText: resp });
                 }
+                
+                const resp = `Has seleccionado: ${autoEncontrado.vehiculo}.\n\nAhora necesito las fechas de renta:\n📅 Fecha de inicio (DD/MM/AAAA)\n📅 Fecha de fin (DD/MM/AAAA)\n\nEjemplo: 20/12/2024 al 25/12/2024`;
+                session.historial.push({ role: "assistant", content: resp });
+                return res.json({ fulfillmentText: resp });
             } else {
                 const resp = `No encontré ese modelo en nuestro catálogo. ¿Podrías verificarlo en el enlace y escribir el nombre exacto?`;
                 return res.json({ fulfillmentText: resp });
@@ -362,8 +399,8 @@ app.post('/webhook', async (req, res) => {
 
         // Datos de contacto
         if (session.estado === 'esperando_datos_contacto') {
-            // Guardar datos
-            session.datosCliente.nombre = queryText; // Simplificado
+            // Guardamos el texto como nombre (simplificado)
+            session.datosCliente.nombre = queryText;
             session.estado = 'esperando_fechas';
             const resp = `Gracias. Ahora necesito las fechas de renta para el ${session.autoSeleccionado.vehiculo}:\n📅 Fecha de inicio (DD/MM/AAAA)\n📅 Fecha de fin (DD/MM/AAAA)`;
             return res.json({ fulfillmentText: resp });
@@ -376,7 +413,6 @@ app.post('/webhook', async (req, res) => {
                 const fechaInicio = fechasMatch[1];
                 const fechaFin = fechasMatch[2];
                 
-                // Validación simple
                 const inicio = new Date(fechaInicio.split('/').reverse().join('-'));
                 const fin = new Date(fechaFin.split('/').reverse().join('-'));
                 if (isNaN(inicio) || isNaN(fin) || fin <= inicio) {
@@ -386,7 +422,6 @@ app.post('/webhook', async (req, res) => {
                 const dias = Math.ceil((fin - inicio) / (1000 * 60 * 60 * 24));
                 const total = dias * session.autoSeleccionado.precio;
                 
-                // Guardar reserva
                 const cliente = {
                     nombre: session.datosCliente.nombre || "Cliente",
                     telefono: session.datosCliente.telefono || "0000000000",
@@ -395,7 +430,9 @@ app.post('/webhook', async (req, res) => {
                 const reserva = {
                     vehiculo: session.autoSeleccionado.vehiculo,
                     fecha_inicio: fechaInicio,
-                    fecha_fin: fechaFin
+                    fecha_fin: fechaFin,
+                    dias,
+                    precio_total: total
                 };
                 
                 const folio = await guardarReservaEnExcel(cliente, reserva);
@@ -409,7 +446,7 @@ app.post('/webhook', async (req, res) => {
                     resp += `Te hemos enviado los detalles a tu correo. ¡Gracias por elegir AutoRent!`;
                     
                     if (session.datosCliente.correo) {
-                        await enviarCorreoConfirmacion(session.datosCliente.correo, {...reserva, dias, precio_total: total}, cliente, folio);
+                        await enviarCorreoConfirmacion(session.datosCliente.correo, reserva, cliente, folio);
                     }
                     
                     session.estado = 'inicio'; // Reiniciar
@@ -434,11 +471,9 @@ app.post('/webhook', async (req, res) => {
             }
         }
 
-        // Si no se manejó por estado, usar IA (fallback)
-        // ... (código de Groq similar al original, pero con contexto del estado)
-        
-        // Respuesta por defecto
-        return res.json({ fulfillmentText: "¿En qué más puedo ayudarte? (1 Rentar, 2 Catálogo, 3 Cancelar, 4 Requisitos, 5 Soporte)" });
+        // Si no se manejó por estado, responder con menú
+        const respDefault = "¿En qué más puedo ayudarte?\n1️⃣ Rentar auto\n2️⃣ Ver Catálogo\n3️⃣ Cancelar Reserva\n4️⃣ Requisitos\n5️⃣ Soporte";
+        return res.json({ fulfillmentText: respDefault });
 
     } catch (error) {
         console.error("❌ ERROR CRÍTICO EN WEBHOOK:", error);
@@ -446,45 +481,8 @@ app.post('/webhook', async (req, res) => {
     }
 });
 
-// Endpoints para la API del catálogo
-app.get('/api/autos', async (req, res) => {
-    try {
-        const autos = await obtenerAutos();
-        let resultados = [...autos];
-        
-        const { tipo, marca, transmision, precio_max, pasajeros, puertas, search } = req.query;
-        if (tipo) resultados = resultados.filter(a => a.tipo.toLowerCase().includes(tipo.toLowerCase()));
-        if (marca) resultados = resultados.filter(a => a.marca.toLowerCase().includes(marca.toLowerCase()));
-        if (transmision) resultados = resultados.filter(a => a.transmision.toLowerCase().includes(transmision.toLowerCase()));
-        if (precio_max) resultados = resultados.filter(a => a.precio <= parseFloat(precio_max));
-        if (pasajeros) resultados = resultados.filter(a => a.pasajeros >= parseInt(pasajeros));
-        if (puertas) resultados = resultados.filter(a => a.puertas == parseInt(puertas));
-        if (search) {
-            resultados = resultados.filter(a => 
-                a.vehiculo.toLowerCase().includes(search.toLowerCase()) ||
-                a.marca.toLowerCase().includes(search.toLowerCase()) ||
-                a.modelo.toLowerCase().includes(search.toLowerCase())
-            );
-        }
-        
-        res.json({ success: true, total: resultados.length, data: resultados });
-    } catch (error) {
-        res.status(500).json({ success: false, error: "Error interno" });
-    }
-});
-
-app.get('/api/metadata', async (req, res) => {
-    try {
-        const autos = await obtenerAutos();
-        const marcas = [...new Set(autos.map(a => a.marca))].sort();
-        const tipos = [...new Set(autos.map(a => a.tipo))].sort();
-        const transmisiones = [...new Set(autos.map(a => a.transmision))].sort();
-        res.json({ success: true, data: { marcas, tipos, transmisiones } });
-    } catch (error) {
-        res.status(500).json({ success: false, error: "Error interno" });
-    }
-});
-
 app.listen(port, () => {
     console.log(`🚀 AutoRent Webhook corriendo en puerto ${port}`);
+    console.log(`📁 Archivos estáticos servidos desde /public`);
+    console.log(`🔗 Catálogo: ${CATALOGO_URL}`);
 });
