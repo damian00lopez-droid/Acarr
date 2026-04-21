@@ -42,7 +42,7 @@ function eliminarAcentos(texto) {
 }
 
 // ===============================
-// 🔹 WHATSAPP (WHAPI) - CORREGIDO Y CON MÁS LOGS
+// 🔹 WHATSAPP (WHAPI) - CORREGIDO
 // ===============================
 async function enviarWhatsApp(numero, mensaje) {
     const token = process.env.WHAPI_TOKEN;
@@ -53,19 +53,14 @@ async function enviarWhatsApp(numero, mensaje) {
     }
 
     try {
-        // Limpiar número: solo dígitos
         const numeroLimpio = String(numero).replace(/\D/g, '');
-        console.log(`📱 Número original: ${numero} -> Limpio: ${numeroLimpio}`);
-        
         if (numeroLimpio.length < 10) {
-            console.error(`❌ Número inválido para WhatsApp: ${numeroLimpio}`);
+            console.error(`❌ Número inválido para WhatsApp: ${numero}`);
             return false;
         }
 
-        // WHAPI espera el número en formato internacional sin '+' y con sufijo @s.whatsapp.net o @c.us
-        // Probaremos con @c.us primero (más común para cuentas normales)
-        const chatId = `${numeroLimpio}@c.us`;
-        
+        // WHAPI acepta el número sin el sufijo @s.whatsapp.net en muchos casos
+        const chatId = numeroLimpio;
         const mensajeLimitado = mensaje.length > 1000 ? mensaje.substring(0, 997) + '...' : mensaje;
 
         const url = `https://gate.whapi.cloud/messages/text`;
@@ -74,9 +69,8 @@ async function enviarWhatsApp(numero, mensaje) {
             body: mensajeLimitado
         };
 
-        console.log(`📤 Enviando WhatsApp a ${chatId}...`);
-        console.log(`   Token usado: ${token.substring(0, 10)}...`);
-
+        console.log(`📤 Enviando WhatsApp a ${numeroLimpio}...`);
+        
         const response = await fetch(url, {
             method: 'POST',
             headers: {
@@ -88,17 +82,16 @@ async function enviarWhatsApp(numero, mensaje) {
         });
 
         const responseData = await response.json();
-        console.log(`   Respuesta WHAPI (${response.status}):`, JSON.stringify(responseData).substring(0, 200));
-
+        
         if (response.ok) {
-            console.log(`✅ WhatsApp enviado correctamente a ${numeroLimpio}`);
+            console.log(`✅ WhatsApp enviado a ${numeroLimpio}`);
             return true;
         } else {
-            // Si falla con @c.us, intentar con @s.whatsapp.net
-            console.log(`   🔄 Reintentando con @s.whatsapp.net...`);
-            const chatIdAlt = `${numeroLimpio}@s.whatsapp.net`;
-            const payloadAlt = { to: chatIdAlt, body: mensajeLimitado };
+            console.error(`❌ Error WHAPI (${response.status}):`, responseData);
             
+            // Reintentar con el sufijo @s.whatsapp.net
+            console.log(`   🔄 Reintentando con sufijo @s.whatsapp.net...`);
+            const payloadAlt = { to: `${numeroLimpio}@s.whatsapp.net`, body: mensajeLimitado };
             const responseAlt = await fetch(url, {
                 method: 'POST',
                 headers: {
@@ -109,14 +102,12 @@ async function enviarWhatsApp(numero, mensaje) {
                 body: JSON.stringify(payloadAlt)
             });
             
-            const responseAltData = await responseAlt.json();
-            console.log(`   Respuesta WHAPI alt (${responseAlt.status}):`, JSON.stringify(responseAltData).substring(0, 200));
-            
             if (responseAlt.ok) {
                 console.log(`✅ WhatsApp enviado (alternativo) a ${numeroLimpio}`);
                 return true;
             } else {
-                console.error(`❌ Error WHAPI definitivo:`, responseAltData);
+                const errorAlt = await responseAlt.json();
+                console.error(`❌ También falló con sufijo:`, errorAlt);
                 return false;
             }
         }
@@ -127,7 +118,7 @@ async function enviarWhatsApp(numero, mensaje) {
 }
 
 // ===============================
-// 🔹 CORREO ELECTRÓNICO (HTML + MAPS) - CORREGIDO NOMBRE
+// 🔹 CORREO ELECTRÓNICO (HTML + MAPS + DOCUMENTOS)
 // ===============================
 async function enviarCorreoConfirmacion(correoDestino, reserva, cliente, folio, direccion) {
     if (!process.env.SMTP_USER || !process.env.SMTP_PASS) {
@@ -147,20 +138,27 @@ async function enviarCorreoConfirmacion(correoDestino, reserva, cliente, folio, 
         });
 
         const mapsLink = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(direccion)}`;
-        
-        // 🔥 CORRECCIÓN: Asegurar que el nombre no esté vacío
-        const nombreCliente = cliente.nombre && cliente.nombre.trim() !== '' ? cliente.nombre : 'Cliente';
 
         const mailHTML = `
         <!DOCTYPE html>
         <html>
-        <head><meta charset="UTF-8"><style>body{font-family:Arial,sans-serif;background:#f4f7fc;padding:20px}.container{max-width:600px;margin:0 auto;background:#fff;border-radius:16px;box-shadow:0 4px 20px rgba(0,0,0,0.08);overflow:hidden}.header{background:linear-gradient(135deg,#667eea,#764ba2);padding:30px;color:#fff;text-align:center}.content{padding:30px}.info-box{background:#f8fafc;border-left:6px solid #667eea;padding:20px;border-radius:12px;margin:20px 0}.folio{background:#eef2ff;padding:15px;border-radius:12px;text-align:center;font-size:20px;color:#4f46e5;font-weight:700}.footer{background:#f1f5f9;padding:20px;text-align:center;color:#64748b}a{color:#667eea;font-weight:600;text-decoration:none}</style></head>
+        <head><meta charset="UTF-8"><style>body{font-family:Arial,sans-serif;background:#f4f7fc;padding:20px}.container{max-width:600px;margin:0 auto;background:#fff;border-radius:16px;box-shadow:0 4px 20px rgba(0,0,0,0.08);overflow:hidden}.header{background:linear-gradient(135deg,#667eea,#764ba2);padding:30px;color:#fff;text-align:center}.content{padding:30px}.info-box{background:#f8fafc;border-left:6px solid #667eea;padding:20px;border-radius:12px;margin:20px 0}.folio{background:#eef2ff;padding:15px;border-radius:12px;text-align:center;font-size:20px;color:#4f46e5;font-weight:700}.footer{background:#f1f5f9;padding:20px;text-align:center;color:#64748b}a{color:#667eea;font-weight:600;text-decoration:none}.documentos{background:#fff3cd;border-left:6px solid #ffc107;padding:15px;border-radius:12px;margin:20px 0}</style></head>
         <body><div class="container"><div class="header"><h1>🚗 Reserva Confirmada</h1><p>AutoRent · Tu viaje comienza aquí</p></div>
-        <div class="content"><p>¡Hola ${nombreCliente}!</p><p>Tu reserva ha sido registrada exitosamente.</p>
+        <div class="content"><p>¡Hola ${cliente.nombre || 'Cliente'}!</p><p>Tu reserva ha sido registrada exitosamente.</p>
         <div class="info-box"><p><strong>🚙 Vehículo:</strong> ${reserva.vehiculo}</p><p><strong>📅 Inicio:</strong> ${reserva.fecha_inicio}</p><p><strong>📅 Fin:</strong> ${reserva.fecha_fin}</p><p><strong>💰 Total:</strong> $${reserva.precio_total?.toLocaleString()}</p></div>
         <div class="folio">📋 Folio: ${folio}</div>
         <p><strong>📍 Dirección de entrega:</strong> ${direccion}</p>
         <p><a href="${mapsLink}">🗺️ Ver en Google Maps</a></p>
+        <div class="documentos">
+            <p><strong>📄 DOCUMENTOS REQUERIDOS:</strong></p>
+            <p>Para completar tu renta, por favor envía los siguientes documentos a este mismo correo <strong>antes de la fecha de inicio</strong>:</p>
+            <ul>
+                <li>✅ INE o Pasaporte vigente (por ambos lados)</li>
+                <li>✅ Licencia de conducir vigente</li>
+                <li>✅ Tarjeta de crédito (solo los últimos 4 dígitos y nombre del titular)</li>
+            </ul>
+            <p>Puedes responder a este correo adjuntando las imágenes o documentos escaneados.</p>
+        </div>
         <p>Presenta este folio y tu identificación al recoger el vehículo. ¡Gracias!</p></div>
         <div class="footer">© AutoRent · Correo automático</div></div></body></html>`;
 
@@ -169,10 +167,10 @@ async function enviarCorreoConfirmacion(correoDestino, reserva, cliente, folio, 
             to: correoDestino,
             subject: `✅ Confirmación de Reserva - Folio: ${folio}`,
             html: mailHTML,
-            text: `Hola ${nombreCliente}, tu reserva (${folio}) para ${reserva.vehiculo} ha sido confirmada. Dirección: ${direccion}. Fechas: ${reserva.fecha_inicio} - ${reserva.fecha_fin}.`
+            text: `Hola ${cliente.nombre}, tu reserva (${folio}) para ${reserva.vehiculo} ha sido confirmada. Dirección: ${direccion}. Fechas: ${reserva.fecha_inicio} - ${reserva.fecha_fin}. Documentos requeridos: INE, licencia, tarjeta.`
         });
 
-        console.log(`📧 Correo enviado a ${correoDestino} (Nombre: ${nombreCliente})`);
+        console.log(`📧 Correo enviado a ${correoDestino}`);
         return true;
     } catch (error) {
         console.error("❌ Error enviando correo:", error);
@@ -289,7 +287,7 @@ function inicializarSesion(sessionId) {
             historial: [],
             estado: 'inicio',
             preferencias: {},
-            datosCliente: { nombre: '', correo: '', telefono: '' },
+            datosCliente: {},
             autoSeleccionado: null,
             direccionEntrega: null,
             lastActivity: Date.now()
@@ -384,32 +382,22 @@ app.post('/webhook', async (req, res) => {
         const autos = await obtenerAutos();
         const session = inicializarSesion(sessionId);
         
-        // 🔥 CORRECCIÓN: Extraer datos de contacto de forma más robusta
+        // ===== EXTRACCIÓN MEJORADA DE DATOS DE CONTACTO =====
         const emailMatch = queryText.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/);
-        if (emailMatch) {
-            session.datosCliente.correo = emailMatch[0];
-        }
+        if (emailMatch) session.datosCliente.correo = emailMatch[0];
         
         const telefonoMatch = queryText.match(/\b\d{10,15}\b/);
-        if (telefonoMatch) {
-            session.datosCliente.telefono = telefonoMatch[0];
-        }
+        if (telefonoMatch) session.datosCliente.telefono = telefonoMatch[0];
         
-        // Extraer nombre: si el mensaje contiene comas, dividir y tomar la primera parte que no sea email ni teléfono
-        if (queryText.includes(',')) {
-            const partes = queryText.split(',').map(p => p.trim());
-            for (const parte of partes) {
-                if (!parte.includes('@') && !parte.match(/^\d+$/)) {
-                    session.datosCliente.nombre = parte;
-                    break;
-                }
+        // Extraer nombre: ignorar si contiene fechas o números largos
+        if (!emailMatch && !telefonoMatch && !queryText.match(/\d{1,2}\/\d{1,2}\/\d{4}/) && !queryText.match(/^\d+$/)) {
+            const palabras = queryText.split(/[\s,]+/).filter(p => p.length > 2 && !p.match(/^\d+$/));
+            if (palabras.length >= 2) {
+                session.datosCliente.nombre = palabras.slice(0, 2).join(' ');
+            } else if (palabras.length === 1) {
+                session.datosCliente.nombre = palabras[0];
             }
-        } else if (!emailMatch && !telefonoMatch && !queryText.match(/\d{1,2}\/\d{1,2}\/\d{4}/)) {
-            // Si no hay comas y no es email/teléfono/fecha, asumir que es el nombre
-            session.datosCliente.nombre = queryText;
         }
-        
-        console.log(`📋 Datos cliente en sesión:`, session.datosCliente);
 
         // MENÚ INICIAL / REINICIO
         const palabrasMenu = ['hola', 'menu', 'inicio', 'buenos dias', 'buenas tardes', 'buenas noches', 'opciones', 'reiniciar', 'buenas'];
@@ -449,7 +437,8 @@ app.post('/webhook', async (req, res) => {
                 return res.json({ fulfillmentText: resp });
             }
             else if (textoLimpio === '4' || textoLimpio.includes('requisito')) {
-                const resp = "📋 Requisitos para rentar:\n• INE/Pasaporte vigente\n• Licencia de conducir vigente\n• Tarjeta de crédito (garantía)\n• Mayor de 21 años";
+                session.estado = 'mostrando_requisitos';
+                const resp = "📋 Requisitos para rentar:\n• INE/Pasaporte vigente\n• Licencia de conducir vigente\n• Tarjeta de crédito (garantía)\n• Mayor de 21 años\n\n¿Te gustaría rentar un auto ahora? (Responde 'Sí' o 'No')";
                 session.historial.push({ role: "assistant", content: resp });
                 return res.json({ fulfillmentText: resp });
             }
@@ -461,6 +450,21 @@ app.post('/webhook', async (req, res) => {
             else {
                 const respuestaIA = await responderConIA(session, queryText);
                 return res.json({ fulfillmentText: respuestaIA });
+            }
+        }
+
+        // FLUJO DE REQUISITOS
+        if (session.estado === 'mostrando_requisitos') {
+            if (textoLimpio.includes('si') || textoLimpio === 'sí' || textoLimpio === 'yes') {
+                session.estado = 'preguntando_puertas';
+                const resp = "Perfecto. Para recomendarte el auto ideal, necesito algunas preferencias:\n\n¿Cuántas puertas prefieres? (2, 4 o 5)";
+                session.historial.push({ role: "assistant", content: resp });
+                return res.json({ fulfillmentText: resp });
+            } else {
+                session.estado = 'inicio';
+                const resp = "Entendido. Cuando estés listo, puedes decir 'rentar' o '1'.\n¿Qué deseas hacer?";
+                session.historial.push({ role: "assistant", content: resp });
+                return res.json({ fulfillmentText: resp });
             }
         }
 
@@ -556,7 +560,6 @@ app.post('/webhook', async (req, res) => {
 
         // ESPERANDO DATOS DE CONTACTO
         if (session.estado === 'esperando_datos_contacto') {
-            // Ya extrajimos los datos al inicio; verificamos que estén completos
             if (session.datosCliente.nombre && session.datosCliente.correo && session.datosCliente.telefono) {
                 session.estado = 'esperando_fechas';
                 const resp = `Gracias ${session.datosCliente.nombre}. Ahora necesito las fechas de renta para el ${session.autoSeleccionado.vehiculo}:\n📅 Fecha de inicio (DD/MM/AAAA)\n📅 Fecha de fin (DD/MM/AAAA)`;
@@ -600,13 +603,12 @@ app.post('/webhook', async (req, res) => {
         if (session.estado === 'esperando_direccion') {
             session.direccionEntrega = queryText;
             
+            // Asegurar que el nombre del cliente no sea la dirección
             const cliente = {
                 nombre: session.datosCliente.nombre || "Cliente",
                 telefono: session.datosCliente.telefono || "0000000000",
                 correo: session.datosCliente.correo || "noemail@example.com"
             };
-            
-            console.log(`📦 Guardando reserva para cliente:`, cliente);
             
             const folio = await guardarReservaEnExcel(cliente, session.reserva, session.direccionEntrega);
             if (folio) {
