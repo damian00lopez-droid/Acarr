@@ -42,12 +42,14 @@ function eliminarAcentos(texto) {
 }
 
 // ===============================
-// 🔹 WHATSAPP (WHAPI) - VERSIÓN MEJORADA
+// 🔹 WHATSAPP (GREEN API) - NUEVA VERSIÓN
 // ===============================
 async function enviarWhatsApp(numero, mensaje) {
-    const token = process.env.WHAPI_TOKEN;
-    if (!token) {
-        console.warn("⚠️ WHAPI_TOKEN no configurado en .env");
+    const idInstance = process.env.GREEN_API_ID_INSTANCE;
+    const apiToken = process.env.GREEN_API_TOKEN_INSTANCE;
+
+    if (!idInstance || !apiToken) {
+        console.warn("⚠️ GREEN_API_ID_INSTANCE o GREEN_API_TOKEN_INSTANCE no configurados en .env");
         return false;
     }
 
@@ -62,46 +64,42 @@ async function enviarWhatsApp(numero, mensaje) {
         // Formato internacional para México (52 + 10 dígitos)
         let chatId = rawNumber;
         if (!chatId.startsWith('52')) {
-            // Si tiene 10 dígitos, asumimos México
             if (chatId.length === 10) {
                 chatId = '52' + chatId;
-            } 
-            // Si tiene 11 dígitos y empieza con 1 (ej: 521234567890)
-            else if (chatId.length === 11 && chatId.startsWith('1')) {
+            } else if (chatId.length === 11 && chatId.startsWith('1')) {
                 chatId = '52' + chatId.substring(1);
             }
         }
-        // Después de ajustar, si no tiene exactamente 12 dígitos, se advierte pero se intenta igual
+        // Green API espera el número con código de país, sin '+' y sin espacios
         if (chatId.length !== 12) {
             console.warn(`⚠️ Número con formato inusual (${chatId.length} dígitos): ${chatId}, se enviará tal cual`);
         }
 
+        const url = `https://api.green-api.com/waInstance${idInstance}/sendMessage/${apiToken}`;
         const payload = {
-            to: chatId,
-            body: mensaje.length > 1000 ? mensaje.substring(0, 997) + '...' : mensaje
+            chatId: `${chatId}@c.us`,
+            message: mensaje.length > 1000 ? mensaje.substring(0, 997) + '...' : mensaje
         };
 
-        console.log(`📤 Enviando WhatsApp a ${chatId} con WHAPI...`);
+        console.log(`📤 Enviando WhatsApp a ${chatId} mediante Green API...`);
         console.log(`   Payload:`, JSON.stringify(payload));
 
-        const response = await fetch('https://gate.whapi.cloud/messages/text', {
+        const response = await fetch(url, {
             method: 'POST',
             headers: {
-                'Accept': 'application/json',
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${token}`
+                'Content-Type': 'application/json'
             },
             body: JSON.stringify(payload)
         });
 
-        const responseText = await response.text();
-        console.log(`   Respuesta WHAPI (${response.status}):`, responseText);
+        const responseData = await response.json();
+        console.log(`   Respuesta Green API (${response.status}):`, JSON.stringify(responseData));
 
-        if (response.ok) {
-            console.log(`✅ WhatsApp enviado a ${chatId}`);
+        if (response.ok && responseData.idMessage) {
+            console.log(`✅ WhatsApp enviado a ${chatId}, idMessage: ${responseData.idMessage}`);
             return true;
         } else {
-            console.error(`❌ Error WHAPI: ${response.status} - ${responseText}`);
+            console.error(`❌ Error Green API: ${response.status} - ${responseData.error || responseData.message || 'Error desconocido'}`);
             return false;
         }
     } catch (error) {
@@ -371,7 +369,7 @@ app.get('/api/metadata', async (req, res) => {
 });
 
 // ===============================
-// 🧪 ENDPOINT DE PRUEBA PARA WHATSAPP
+// 🧪 ENDPOINT DE PRUEBA PARA GREEN API WHATSAPP
 // ===============================
 app.post('/test-whatsapp', express.json(), async (req, res) => {
     const { numero, mensaje } = req.body;
@@ -705,5 +703,5 @@ app.listen(port, () => {
     console.log(`🚀 AutoRent Webhook corriendo en puerto ${port}`);
     console.log(`📁 Archivos estáticos servidos desde /public`);
     console.log(`🔗 Catálogo: ${CATALOGO_URL}`);
-    console.log(`🧪 Endpoint de prueba WhatsApp: POST /test-whatsapp`);
+    console.log(`🧪 Endpoint de prueba WhatsApp (Green API): POST /test-whatsapp`);
 });
