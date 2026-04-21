@@ -60,7 +60,6 @@ async function enviarWhatsApp(numero, mensaje) {
         }
 
         // WHAPI espera el número con código de país, asumimos MX (+52)
-        // Si el usuario ya incluye '52', lo dejamos; si no, lo agregamos.
         let chatId = numeroLimpio;
         if (!chatId.startsWith('52') && chatId.length === 10) {
             chatId = '52' + chatId;
@@ -94,7 +93,7 @@ async function enviarWhatsApp(numero, mensaje) {
         } else {
             console.error(`❌ Error WHAPI: ${response.status} - ${responseText}`);
             
-            // Reintentar con formato alternativo (sin código de país extra)
+            // Reintentar con formato alternativo (sin modificar)
             console.log(`   🔄 Reintentando con número original sin modificar...`);
             const payloadAlt = { to: numeroLimpio, body: payload.body };
             const responseAlt = await fetch(url, {
@@ -394,28 +393,28 @@ app.post('/webhook', async (req, res) => {
         const autos = await obtenerAutos();
         const session = inicializarSesion(sessionId);
         
-        // ===== EXTRACCIÓN MEJORADA DE DATOS DE CONTACTO =====
-        // Solo extraemos si el estado es 'esperando_datos_contacto' o es el primer mensaje con datos
-        if (session.estado === 'esperando_datos_contacto' || session.estado === 'inicio') {
-            const emailMatch = queryText.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/);
-            if (emailMatch) session.datosCliente.correo = emailMatch[0];
+        // ===== EXTRACCIÓN DE DATOS DE CONTACTO (solo en estado esperando_datos_contacto) =====
+        if (session.estado === 'esperando_datos_contacto') {
+            const regexContacto = /([a-zA-ZáéíóúñÁÉÍÓÚÑ\s]+?)[,\s]+([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})[,\s]+(\d{10,15})/i;
+            const match = queryText.match(regexContacto);
             
-            const telefonoMatch = queryText.match(/\b\d{10,15}\b/);
-            if (telefonoMatch) session.datosCliente.telefono = telefonoMatch[0];
-            
-            // Nombre: tomar las primeras palabras que no sean email, teléfono, números o fechas
-            if (!emailMatch && !telefonoMatch) {
-                const partes = queryText.split(/[\s,]+/);
-                const posiblesNombres = partes.filter(p => 
-                    p.length > 2 && 
-                    !p.match(/^\d+$/) && 
-                    !p.match(/\d{1,2}\/\d{1,2}\/\d{4}/)
-                );
-                if (posiblesNombres.length >= 2) {
-                    session.datosCliente.nombre = posiblesNombres.slice(0, 2).join(' ');
-                } else if (posiblesNombres.length === 1) {
-                    session.datosCliente.nombre = posiblesNombres[0];
-                }
+            if (match) {
+                session.datosCliente.nombre = match[1].trim();
+                session.datosCliente.correo = match[2].trim();
+                session.datosCliente.telefono = match[3].trim();
+            } else {
+                // Extraer por partes
+                const emailMatch = queryText.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/);
+                const telefonoMatch = queryText.match(/\b\d{10,15}\b/);
+                let nombreExtraido = queryText
+                    .replace(emailMatch?.[0] || '', '')
+                    .replace(telefonoMatch?.[0] || '', '')
+                    .replace(/[,;]/g, ' ')
+                    .trim();
+                
+                if (emailMatch) session.datosCliente.correo = emailMatch[0];
+                if (telefonoMatch) session.datosCliente.telefono = telefonoMatch[0];
+                if (nombreExtraido) session.datosCliente.nombre = nombreExtraido;
             }
         }
 
@@ -569,7 +568,7 @@ app.post('/webhook', async (req, res) => {
             if (autoEncontrado) {
                 session.autoSeleccionado = autoEncontrado;
                 session.estado = 'esperando_datos_contacto';
-                session.datosCliente = { nombre: null, correo: null, telefono: null }; // Resetear para recibir nuevos datos
+                session.datosCliente = { nombre: null, correo: null, telefono: null };
                 
                 const resp = `Excelente elección: ${autoEncontrado.vehiculo}.\n\nPara continuar con la reserva, necesito tus datos:\n- Nombre completo\n- Correo electrónico\n- Teléfono de contacto\n\nPor favor, proporciónalos en un solo mensaje (ej: Juan Pérez, juan@mail.com, 5512345678).`;
                 session.historial.push({ role: "assistant", content: resp });
@@ -580,9 +579,9 @@ app.post('/webhook', async (req, res) => {
             }
         }
 
-        // ESPERANDO DATOS DE CONTACTO
+        // ESPERANDO DATOS DE CONTACTO (PROCESAMIENTO)
         if (session.estado === 'esperando_datos_contacto') {
-            // Ya extrajimos al inicio; ahora verificamos que estén los tres campos
+            // Ya se extrajo al inicio; ahora verificamos que estén los tres
             if (session.datosCliente.nombre && session.datosCliente.correo && session.datosCliente.telefono) {
                 session.estado = 'esperando_fechas';
                 const resp = `Gracias ${session.datosCliente.nombre}. Ahora necesito las fechas de renta para el ${session.autoSeleccionado.vehiculo}:\n📅 Fecha de inicio (DD/MM/AAAA)\n📅 Fecha de fin (DD/MM/AAAA)`;
@@ -593,29 +592,48 @@ app.post('/webhook', async (req, res) => {
             }
         }
 
-        // ESPERANDO FECHAS
+        // ESPERANDO FECHAS (CON VALIDACIÓN REAL)
         if (session.estado === 'esperando_fechas') {
             const fechasMatch = queryText.match(/(\d{1,2}\/\d{1,2}\/\d{4}).*?(\d{1,2}\/\d{1,2}\/\d{4})/);
             if (fechasMatch) {
-                const fechaInicio = fechasMatch[1];
-                const fechaFin = fechasMatch[2];
+                const fechaInicioStr = fechasMatch[1];
+                const fechaFinStr = fechasMatch[2];
                 
-                const inicio = new Date(fechaInicio.split('/').reverse().join('-'));
-                const fin = new Date(fechaFin.split('/').reverse().join('-'));
-                if (isNaN(inicio) || isNaN(fin) || fin <= inicio) {
-                    return res.json({ fulfillmentText: "Fechas inválidas. Asegúrate de que la fecha fin sea posterior a la de inicio." });
+                function esFechaValida(dia, mes, anio) {
+                    const fecha = new Date(anio, mes - 1, dia);
+                    return fecha.getFullYear() === anio && fecha.getMonth() === mes - 1 && fecha.getDate() === dia;
+                }
+                
+                const [diaI, mesI, anioI] = fechaInicioStr.split('/').map(Number);
+                const [diaF, mesF, anioF] = fechaFinStr.split('/').map(Number);
+                
+                if (!esFechaValida(diaI, mesI, anioI) || !esFechaValida(diaF, mesF, anioF)) {
+                    return res.json({ fulfillmentText: "❌ Alguna de las fechas no es válida (día/mes incorrecto). Por favor, verifica." });
+                }
+                
+                const inicio = new Date(anioI, mesI - 1, diaI);
+                const fin = new Date(anioF, mesF - 1, diaF);
+                const hoy = new Date();
+                hoy.setHours(0, 0, 0, 0);
+                
+                if (inicio < hoy) {
+                    return res.json({ fulfillmentText: "❌ La fecha de inicio no puede ser anterior a hoy." });
+                }
+                if (fin <= inicio) {
+                    return res.json({ fulfillmentText: "❌ La fecha de fin debe ser posterior a la de inicio." });
                 }
                 
                 session.reserva = {
                     vehiculo: session.autoSeleccionado.vehiculo,
-                    fecha_inicio: fechaInicio,
-                    fecha_fin: fechaFin,
+                    fecha_inicio: fechaInicioStr,
+                    fecha_fin: fechaFinStr,
                     dias: Math.ceil((fin - inicio) / (1000 * 60 * 60 * 24))
                 };
                 session.reserva.precio_total = session.reserva.dias * session.autoSeleccionado.precio;
                 
                 session.estado = 'esperando_direccion';
                 const resp = `Perfecto. Por último, ¿cuál es la dirección donde quieres recibir el vehículo? (Calle, número, ciudad)`;
+                session.historial.push({ role: "assistant", content: resp });
                 return res.json({ fulfillmentText: resp });
             } else {
                 return res.json({ fulfillmentText: "Por favor, proporciona las fechas en formato DD/MM/AAAA al DD/MM/AAAA" });
@@ -626,7 +644,6 @@ app.post('/webhook', async (req, res) => {
         if (session.estado === 'esperando_direccion') {
             session.direccionEntrega = queryText;
             
-            // Asegurar que el nombre del cliente esté definido
             const cliente = {
                 nombre: session.datosCliente.nombre || "Cliente",
                 telefono: session.datosCliente.telefono || "0000000000",
