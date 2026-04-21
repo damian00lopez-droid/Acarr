@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AutoRent - 30 Modelos Premium</title>
+    <title>AutoRent - Catálogo Premium</title>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
     <style>
@@ -150,6 +150,7 @@
             align-items: flex-end;
             justify-content: flex-end;
             padding: 12px;
+            background-color: #e2e8f0; /* fallback */
         }
         .auto-imagen::after {
             content: '';
@@ -261,7 +262,7 @@
 <div class="container">
     <div class="header">
         <h1><i class="fas fa-car" style="margin-right: 10px; background: none; -webkit-text-fill-color: #667eea;"></i>AutoRent</h1>
-        <p>30 modelos disponibles · Encuentra tu auto ideal</p>
+        <p>Encuentra el auto perfecto para tu viaje</p>
     </div>
 
     <div class="filtros-panel">
@@ -305,7 +306,9 @@
     </div>
 
     <div class="stats" id="stats"></div>
-    <div class="grid-autos" id="lista-autos"></div>
+    <div class="grid-autos" id="lista-autos">
+        <div class="loading"><i class="fas fa-spinner fa-pulse"></i> Cargando catálogo...</div>
+    </div>
 </div>
 
 <button class="btn-regresar" onclick="regresarAlChat()">
@@ -313,59 +316,33 @@
 </button>
 
 <script>
-    // Datos de los 30 autos con imágenes reales (Unsplash)
-    const autosData = [
-        { marca:"Toyota", modelo:"Corolla", año:2022, tipo:"Sedán", transmision:"Automática", puertas:4, pasajeros:5, precio:35, imagen:"https://images.unsplash.com/photo-1623860841280-29e069e73d47?w=400" },
-        { marca:"Nissan", modelo:"March", año:2021, tipo:"Compacto", transmision:"Manual", puertas:5, pasajeros:4, precio:35, imagen:"https://images.unsplash.com/photo-1541899481282-d53bffe3c35d?w=400" },
-        { marca:"Kia", modelo:"Rio", año:2023, tipo:"Sedán", transmision:"Automática", puertas:4, pasajeros:5, precio:35, imagen:"https://images.unsplash.com/photo-1590362891991-f776e747a588?w=400" },
-        { marca:"Hyundai", modelo:"i10", año:2020, tipo:"Compacto", transmision:"Manual", puertas:5, pasajeros:4, precio:35, imagen:"https://images.unsplash.com/photo-1580273916550-e323be2ae537?w=400" },
-        { marca:"Chevrolet", modelo:"Aveo", año:2022, tipo:"Sedán", transmision:"Manual", puertas:4, pasajeros:5, precio:35, imagen:"https://images.unsplash.com/photo-1593361427244-934c2649a515?w=400" },
-        { marca:"Renault", modelo:"Logan", año:2021, tipo:"Sedán", transmision:"Manual", puertas:4, pasajeros:5, precio:35, imagen:"https://images.unsplash.com/photo-1567808291548-fc3ee04dbcf0?w=400" },
-        { marca:"Suzuki", modelo:"Swift", año:2023, tipo:"Hatchback", transmision:"Automática", puertas:5, pasajeros:4, precio:35, imagen:"https://images.unsplash.com/photo-1571607388263-3254c8a51169?w=400" },
-        { marca:"VW", modelo:"Jetta", año:2023, tipo:"Sedán", transmision:"Automática", puertas:4, pasajeros:5, precio:60, imagen:"https://images.unsplash.com/photo-1617531653332-bd59c2026859?w=400" },
-        { marca:"Honda", modelo:"Civic", año:2022, tipo:"Sedán", transmision:"Automática", puertas:4, pasajeros:5, precio:60, imagen:"https://images.unsplash.com/photo-1603584173870-7d23f9715152?w=400" },
-        { marca:"Mazda", modelo:"Mazda 3", año:2023, tipo:"Sedán", transmision:"Automática", puertas:4, pasajeros:5, precio:60, imagen:"https://images.unsplash.com/photo-1568605117036-5fe5b0e9e8f1?w=400" },
-        { marca:"Ford", modelo:"Fusion", año:2020, tipo:"Sedán", transmision:"Automática", puertas:4, pasajeros:5, precio:60, imagen:"https://images.unsplash.com/photo-1580273916550-e323be2ae537?w=400" },
-        { marca:"Toyota", modelo:"Camry", año:2022, tipo:"Sedán", transmision:"Automática", puertas:4, pasajeros:5, precio:60, imagen:"https://images.unsplash.com/photo-1621007947382-bb3c3994e3fb?w=400" },
-        { marca:"Nissan", modelo:"Altima", año:2021, tipo:"Sedán", transmision:"Automática", puertas:4, pasajeros:5, precio:60, imagen:"https://images.unsplash.com/photo-1580273916550-e323be2ae537?w=400" },
-        { marca:"Hyundai", modelo:"Elantra", año:2023, tipo:"Sedán", transmision:"Automática", puertas:4, pasajeros:5, precio:60, imagen:"https://images.unsplash.com/photo-1580273916550-e323be2ae537?w=400" },
-        { marca:"BMW", modelo:"3 Series", año:2023, tipo:"Sedán", transmision:"Automática", puertas:4, pasajeros:5, precio:120, imagen:"https://images.unsplash.com/photo-1555215695-3004980ad54e?w=400" },
-        { marca:"Mercedes", modelo:"C-Class", año:2022, tipo:"Sedán", transmision:"Automática", puertas:4, pasajeros:5, precio:120, imagen:"https://images.unsplash.com/photo-1617531653332-bd59c2026859?w=400" },
-        { marca:"Audi", modelo:"A4", año:2023, tipo:"Sedán", transmision:"Automática", puertas:4, pasajeros:5, precio:120, imagen:"https://images.unsplash.com/photo-1603584173870-7d23f9715152?w=400" },
-        { marca:"Tesla", modelo:"Model 3", año:2023, tipo:"Eléctrico", transmision:"Automática", puertas:4, pasajeros:5, precio:120, imagen:"https://images.unsplash.com/photo-1560958089-b8a1929cea89?w=400" },
-        { marca:"Lexus", modelo:"IS", año:2022, tipo:"Sedán", transmision:"Automática", puertas:4, pasajeros:5, precio:120, imagen:"https://images.unsplash.com/photo-1622180203379-51d1e2f5c7e4?w=400" },
-        { marca:"Volvo", modelo:"S60", año:2023, tipo:"Sedán", transmision:"Automática", puertas:4, pasajeros:5, precio:120, imagen:"https://images.unsplash.com/photo-1618843479313-40f8afb4b4d8?w=400" },
-        { marca:"Jaguar", modelo:"XE", año:2021, tipo:"Sedán", transmision:"Automática", puertas:4, pasajeros:5, precio:120, imagen:"https://images.unsplash.com/photo-1580274455191-2c1c2c8e8f1f?w=400" },
-        { marca:"Toyota", modelo:"Sienna", año:2022, tipo:"Van", transmision:"Automática", puertas:5, pasajeros:8, precio:85, imagen:"https://images.unsplash.com/photo-1609521263047-f8f205293f24?w=400" },
-        { marca:"Honda", modelo:"Odyssey", año:2021, tipo:"Van", transmision:"Automática", puertas:5, pasajeros:8, precio:85, imagen:"https://images.unsplash.com/photo-1583121274602-3e2820c69888?w=400" },
-        { marca:"Kia", modelo:"Carnival", año:2023, tipo:"Van", transmision:"Automática", puertas:5, pasajeros:7, precio:85, imagen:"https://images.unsplash.com/photo-1580274455191-2c1c2c8e8f1f?w=400" },
-        { marca:"Chevrolet", modelo:"Suburban", año:2022, tipo:"SUV", transmision:"Automática", puertas:5, pasajeros:9, precio:150, imagen:"https://images.unsplash.com/photo-1519641471654-76ce0107ad1b?w=400" },
-        { marca:"Ford", modelo:"Expedition", año:2021, tipo:"SUV", transmision:"Automática", puertas:5, pasajeros:8, precio:150, imagen:"https://images.unsplash.com/photo-1519641471654-76ce0107ad1b?w=400" },
-        { marca:"Cadillac", modelo:"Escalade", año:2023, tipo:"SUV", transmision:"Automática", puertas:5, pasajeros:7, precio:150, imagen:"https://images.unsplash.com/photo-1580274455191-2c1c2c8e8f1f?w=400" },
-        { marca:"Dacia", modelo:"Duster", año:2022, tipo:"SUV", transmision:"Manual", puertas:5, pasajeros:5, precio:50, imagen:"https://images.unsplash.com/photo-1533473359331-0135ef1b58bf?w=400" },
-        { marca:"Suzuki", modelo:"Ertiga", año:2023, tipo:"Van", transmision:"Automática", puertas:5, pasajeros:7, precio:50, imagen:"https://images.unsplash.com/photo-1580274455191-2c1c2c8e8f1f?w=400" },
-        { marca:"Toyota", modelo:"Avanza", año:2022, tipo:"Van", transmision:"Automática", puertas:5, pasajeros:7, precio:50, imagen:"https://images.unsplash.com/photo-1580274455191-2c1c2c8e8f1f?w=400" }
-    ];
+    const API_URL = '/api/autos';
+    const urlParams = new URLSearchParams(window.location.search);
+    let filtrosActuales = {};
+    let todosLosAutos = []; // Cache local de autos
 
-    // Agregar vehículo completo para facilitar búsqueda
-    autosData.forEach((a,i) => {
-        a.vehiculo = `${a.marca} ${a.modelo}`;
-        a.id = i;
+    // Inicializar
+    document.addEventListener('DOMContentLoaded', () => {
+        cargarMetadata();
+        cargarFiltrosDesdeURL();
     });
 
-    let filtrosActuales = {};
-    const urlParams = new URLSearchParams(window.location.search);
-
-    // Llenar selects con marcas/transmisiones únicas
-    function cargarMetadata() {
-        const marcas = [...new Set(autosData.map(a => a.marca))].sort();
-        const transmisiones = [...new Set(autosData.map(a => a.transmision))].sort();
-        llenarSelect('filtro-marca', marcas);
-        llenarSelect('filtro-transmision', transmisiones);
+    async function cargarMetadata() {
+        try {
+            const response = await fetch('/api/metadata');
+            const data = await response.json();
+            if (data.success) {
+                llenarSelect('filtro-marca', data.data.marcas);
+                llenarSelect('filtro-transmision', data.data.transmisiones);
+            }
+        } catch (error) {
+            console.error('Error metadata:', error);
+        }
     }
 
     function llenarSelect(id, opciones) {
         const select = document.getElementById(id);
+        if (!select) return;
         opciones.forEach(op => {
             const option = document.createElement('option');
             option.value = op;
@@ -374,105 +351,70 @@
         });
     }
 
-    function filtrarAutos() {
-        let resultados = autosData.filter(auto => {
-            if (filtrosActuales.marca && auto.marca !== filtrosActuales.marca) return false;
-            if (filtrosActuales.transmision && auto.transmision !== filtrosActuales.transmision) return false;
-            if (filtrosActuales.precio_max && auto.precio > parseFloat(filtrosActuales.precio_max)) return false;
-            if (filtrosActuales.pasajeros && auto.pasajeros < parseInt(filtrosActuales.pasajeros)) return false;
-            if (filtrosActuales.puertas && auto.puertas != parseInt(filtrosActuales.puertas)) return false;
-            if (filtrosActuales.search) {
-                const term = filtrosActuales.search.toLowerCase();
-                return auto.vehiculo.toLowerCase().includes(term) || auto.marca.toLowerCase().includes(term) || auto.modelo.toLowerCase().includes(term);
+    async function cargarAutos() {
+        try {
+            document.getElementById('lista-autos').innerHTML = '<div class="loading"><i class="fas fa-spinner fa-pulse"></i> Cargando...</div>';
+            
+            const params = new URLSearchParams();
+            Object.keys(filtrosActuales).forEach(key => {
+                if (filtrosActuales[key]) params.append(key, filtrosActuales[key]);
+            });
+            
+            const response = await fetch(`${API_URL}?${params.toString()}`);
+            const data = await response.json();
+            
+            if (data.success) {
+                todosLosAutos = data.data;
+                mostrarAutos(todosLosAutos);
+                actualizarStats(data.total);
+                actualizarFiltrosActivos();
+            } else {
+                throw new Error(data.error || 'Error desconocido');
             }
-            return true;
-        });
-        return resultados;
+        } catch (error) {
+            console.error('Error cargando autos:', error);
+            document.getElementById('lista-autos').innerHTML = '<div class="no-resultados">❌ Error al cargar el catálogo</div>';
+        }
     }
 
-    function mostrarAutos() {
-        const resultados = filtrarAutos();
+    function mostrarAutos(autos) {
         const container = document.getElementById('lista-autos');
-        const stats = document.getElementById('stats');
-        stats.innerHTML = `<i class="fas fa-list"></i> ${resultados.length} vehículos encontrados`;
-
-        if (resultados.length === 0) {
+        if (autos.length === 0) {
             container.innerHTML = '<div class="no-resultados"><i class="fas fa-car-side"></i> No se encontraron vehículos</div>';
             return;
         }
-
-        container.innerHTML = resultados.map(auto => `
-            <div class="auto-card">
-                <div class="auto-imagen" style="background-image: url('${auto.imagen}')">
-                    <span class="auto-categoria">${auto.tipo}</span>
-                </div>
-                <div class="auto-info">
-                    <div class="auto-titulo">${auto.marca} ${auto.modelo}</div>
-                    <div class="auto-precio">$${auto.precio.toLocaleString()} <small>/ día</small></div>
-                    <div class="auto-detalles">
-                        <div class="detalle-item"><i class="fas fa-door-open"></i> ${auto.puertas} puertas</div>
-                        <div class="detalle-item"><i class="fas fa-cog"></i> ${auto.transmision}</div>
-                        <div class="detalle-item"><i class="fas fa-users"></i> ${auto.pasajeros} asientos</div>
-                        <div class="detalle-item"><i class="fas fa-calendar"></i> ${auto.año}</div>
+        
+        container.innerHTML = autos.map(auto => {
+            // Usar la imagen del Excel; si está vacía, usar fallback
+            const imagenUrl = auto.imagen && auto.imagen.trim() !== '' 
+                ? auto.imagen 
+                : 'https://images.unsplash.com/photo-1541899481282-d53bffe3c35d?w=400';
+                
+            return `
+                <div class="auto-card">
+                    <div class="auto-imagen" style="background-image: url('${imagenUrl}')">
+                        <span class="auto-categoria">${auto.tipo || 'Auto'}</span>
                     </div>
-                    <button class="btn-seleccionar" onclick="seleccionarAuto('${auto.vehiculo}')">
-                        <i class="fas fa-check-circle"></i> Seleccionar
-                    </button>
+                    <div class="auto-info">
+                        <div class="auto-titulo">${auto.marca} ${auto.modelo}</div>
+                        <div class="auto-precio">$${auto.precio.toLocaleString()} <small>/ día</small></div>
+                        <div class="auto-detalles">
+                            <div class="detalle-item"><i class="fas fa-door-open"></i> ${auto.puertas} puertas</div>
+                            <div class="detalle-item"><i class="fas fa-cog"></i> ${auto.transmision}</div>
+                            <div class="detalle-item"><i class="fas fa-users"></i> ${auto.pasajeros} asientos</div>
+                            <div class="detalle-item"><i class="fas fa-calendar"></i> ${auto.año}</div>
+                        </div>
+                        <button class="btn-seleccionar" onclick="seleccionarAuto('${auto.vehiculo.replace(/'/g, "\\'")}')">
+                            <i class="fas fa-check-circle"></i> Seleccionar
+                        </button>
+                    </div>
                 </div>
-            </div>
-        `).join('');
-        actualizarFiltrosActivos();
+            `;
+        }).join('');
     }
 
-    function actualizarStats() {}
-    function actualizarFiltrosActivos() {
-        const container = document.getElementById('filtros-activos');
-        const filtros = Object.entries(filtrosActuales).filter(([k,v]) => v);
-        if (filtros.length === 0) {
-            container.innerHTML = '';
-            return;
-        }
-        container.innerHTML = filtros.map(([k,v]) => `
-            <span class="filtro-tag">${k}: ${v} <button onclick="eliminarFiltro('${k}')">&times;</button></span>
-        `).join('');
-    }
-
-    function eliminarFiltro(key) {
-        delete filtrosActuales[key];
-        document.getElementById(`filtro-${key}`).value = '';
-        mostrarAutos();
-    }
-
-    function aplicarFiltros() {
-        filtrosActuales = {
-            marca: document.getElementById('filtro-marca').value,
-            transmision: document.getElementById('filtro-transmision').value,
-            precio_max: document.getElementById('filtro-precio').value,
-            pasajeros: document.getElementById('filtro-pasajeros').value,
-            puertas: document.getElementById('filtro-puertas').value,
-            search: document.getElementById('filtro-buscar').value
-        };
-        Object.keys(filtrosActuales).forEach(k => { if (!filtrosActuales[k]) delete filtrosActuales[k]; });
-        mostrarAutos();
-    }
-
-    function limpiarFiltros() {
-        document.querySelectorAll('.filtro-item select, .filtro-item input').forEach(el => el.value = '');
-        filtrosActuales = {};
-        mostrarAutos();
-    }
-
-    function cargarFiltrosDesdeURL() {
-        const campos = ['marca', 'transmision', 'precio_max', 'pasajeros', 'puertas'];
-        campos.forEach(campo => {
-            const valor = urlParams.get(campo);
-            if (valor) {
-                filtrosActuales[campo] = valor;
-                const el = document.getElementById(`filtro-${campo}`);
-                if (el) el.value = valor;
-            }
-        });
-        mostrarAutos();
+    function actualizarStats(total) {
+        document.getElementById('stats').innerHTML = `<i class="fas fa-list"></i> ${total} vehículos encontrados`;
     }
 
     function seleccionarAuto(vehiculo) {
@@ -486,20 +428,66 @@
         }, 500);
     }
 
+    function aplicarFiltros() {
+        filtrosActuales = {
+            marca: document.getElementById('filtro-marca').value,
+            transmision: document.getElementById('filtro-transmision').value,
+            precio_max: document.getElementById('filtro-precio').value,
+            pasajeros: document.getElementById('filtro-pasajeros').value,
+            puertas: document.getElementById('filtro-puertas').value,
+            search: document.getElementById('filtro-buscar').value
+        };
+        Object.keys(filtrosActuales).forEach(k => { if (!filtrosActuales[k]) delete filtrosActuales[k]; });
+        cargarAutos();
+    }
+
+    function limpiarFiltros() {
+        document.querySelectorAll('.filtro-item select, .filtro-item input').forEach(el => el.value = '');
+        filtrosActuales = {};
+        cargarAutos();
+    }
+
+    function cargarFiltrosDesdeURL() {
+        const campos = ['marca', 'transmision', 'precio_max', 'pasajeros', 'puertas'];
+        campos.forEach(campo => {
+            const valor = urlParams.get(campo);
+            if (valor) {
+                filtrosActuales[campo] = valor;
+                const el = document.getElementById(`filtro-${campo}`);
+                if (el) el.value = valor;
+            }
+        });
+        cargarAutos();
+    }
+
+    function actualizarFiltrosActivos() {
+        const container = document.getElementById('filtros-activos');
+        const filtros = Object.entries(filtrosActuales).filter(([_, v]) => v);
+        if (filtros.length === 0) {
+            container.innerHTML = '';
+            return;
+        }
+        container.innerHTML = filtros.map(([k, v]) => `
+            <span class="filtro-tag">${k}: ${v} <button onclick="eliminarFiltro('${k}')">&times;</button></span>
+        `).join('');
+    }
+
+    function eliminarFiltro(key) {
+        delete filtrosActuales[key];
+        document.getElementById(`filtro-${key}`).value = '';
+        cargarAutos();
+    }
+
     function regresarAlChat() {
         window.location.href = 'https://t.me/Autorentai_bot';
     }
 
-    // Debounce búsqueda
+    // Búsqueda con debounce
     let timeout;
     document.getElementById('filtro-buscar')?.addEventListener('input', () => {
         clearTimeout(timeout);
         timeout = setTimeout(aplicarFiltros, 500);
     });
-
-    // Inicializar
-    cargarMetadata();
-    cargarFiltrosDesdeURL();
 </script>
 </body>
 </html>
