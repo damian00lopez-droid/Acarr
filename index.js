@@ -14,7 +14,8 @@ const sheetdbUrl = process.env.SHEETDB_URL;
 // ===============================
 // 🔥 CONFIGURACIÓN
 // ===============================
-const CATALOGO_URL = process.env.CATALOGO_URL || "https://acarr-v3a2.onrender.com/catalogo.html";
+
+const CATALOGO_URL = "https://acarr-v3a2.onrender.com/catalogo.html";
 const MAX_HISTORIAL = 14;
 
 const RAW_KEY = process.env.GROQ_API_KEY || "";
