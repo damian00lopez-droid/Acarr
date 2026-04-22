@@ -16,6 +16,7 @@ const sheetdbUrl = process.env.SHEETDB_URL;
 // ===============================
 const CATALOGO_URL = "https://acarr-v3a2.onrender.com/catalogo.html";
 const MAX_HISTORIAL = 14;
+const SOPORTE_WHATSAPP = "https://wa.me/5215532875527"; // Número de soporte
 
 const RAW_KEY = process.env.GROQ_API_KEY || "";
 const CLEAN_KEY = RAW_KEY.trim();
@@ -39,71 +40,6 @@ let cacheAutos = {
 // ===============================
 function eliminarAcentos(texto) {
     return texto.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
-}
-
-// ===============================
-// 🔹 WHATSAPP (GREEN API)
-// ===============================
-async function enviarWhatsApp(numero, mensaje) {
-    const instance = process.env.GREEN_API_INSTANCE;
-    const token = process.env.GREEN_API_TOKEN;
-    
-    if (!instance || !token) {
-        console.warn("⚠️ GREEN_API_INSTANCE o GREEN_API_TOKEN no configurados en .env");
-        return false;
-    }
-
-    try {
-        // Limpiar número: solo dígitos
-        let rawNumber = String(numero).replace(/\D/g, '');
-        if (rawNumber.length < 10) {
-            console.error(`❌ Número inválido (menos de 10 dígitos): ${numero}`);
-            return false;
-        }
-
-        // Formato internacional para México (52 + 10 dígitos)
-        let chatId = rawNumber;
-        if (!chatId.startsWith('52')) {
-            if (chatId.length === 10) {
-                chatId = '52' + chatId;
-            } else if (chatId.length === 11 && chatId.startsWith('1')) {
-                chatId = '52' + chatId.substring(1);
-            }
-        }
-
-        // Green API requiere el número con @c.us al final
-        const chatIdGreen = `${chatId}@c.us`;
-        const url = `https://api.green-api.com/waInstance${instance}/sendMessage/${token}`;
-        
-        const payload = {
-            chatId: chatIdGreen,
-            message: mensaje.length > 1000 ? mensaje.substring(0, 997) + '...' : mensaje
-        };
-
-        console.log(`📤 Enviando WhatsApp a ${chatIdGreen} mediante Green API...`);
-        console.log(`   URL: ${url}`);
-        console.log(`   Payload:`, JSON.stringify(payload));
-
-        const response = await fetch(url, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload)
-        });
-
-        const responseData = await response.json();
-        console.log(`   Respuesta Green API (${response.status}):`, responseData);
-
-        if (response.ok && responseData.idMessage) {
-            console.log(`✅ WhatsApp enviado correctamente. ID: ${responseData.idMessage}`);
-            return true;
-        } else {
-            console.error(`❌ Error Green API: ${response.status} - ${JSON.stringify(responseData)}`);
-            return false;
-        }
-    } catch (error) {
-        console.error("❌ Excepción en enviarWhatsApp:", error.message);
-        return false;
-    }
 }
 
 // ===============================
@@ -367,18 +303,6 @@ app.get('/api/metadata', async (req, res) => {
 });
 
 // ===============================
-// 🧪 ENDPOINT DE PRUEBA PARA WHATSAPP (GREEN API)
-// ===============================
-app.post('/test-whatsapp', express.json(), async (req, res) => {
-    const { numero, mensaje } = req.body;
-    if (!numero || !mensaje) {
-        return res.status(400).json({ error: "Faltan 'numero' o 'mensaje'" });
-    }
-    const enviado = await enviarWhatsApp(numero, mensaje);
-    res.json({ success: enviado, numero, mensaje: mensaje.substring(0, 100) });
-});
-
-// ===============================
 // 🚀 WEBHOOK PRINCIPAL
 // ===============================
 app.post('/webhook', async (req, res) => {
@@ -390,7 +314,7 @@ app.post('/webhook', async (req, res) => {
         const autos = await obtenerAutos();
         const session = inicializarSesion(sessionId);
         
-        // ===== EXTRACCIÓN DE DATOS DE CONTACTO (solo en estado esperando_datos_contacto) =====
+        // ===== EXTRACCIÓN DE DATOS DE CONTACTO =====
         if (session.estado === 'esperando_datos_contacto') {
             const regexContacto = /([a-zA-ZáéíóúñÁÉÍÓÚÑ\s]+?)[,\s]+([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})[,\s]+(\d{10,15})/i;
             const match = queryText.match(regexContacto);
@@ -400,7 +324,6 @@ app.post('/webhook', async (req, res) => {
                 session.datosCliente.correo = match[2].trim();
                 session.datosCliente.telefono = match[3].trim();
             } else {
-                // Extraer por partes
                 const emailMatch = queryText.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/);
                 const telefonoMatch = queryText.match(/\b\d{10,15}\b/);
                 let nombreExtraido = queryText
@@ -408,7 +331,6 @@ app.post('/webhook', async (req, res) => {
                     .replace(telefonoMatch?.[0] || '', '')
                     .replace(/[,;]/g, ' ')
                     .trim();
-                
                 if (emailMatch) session.datosCliente.correo = emailMatch[0];
                 if (telefonoMatch) session.datosCliente.telefono = telefonoMatch[0];
                 if (nombreExtraido) session.datosCliente.nombre = nombreExtraido;
@@ -460,7 +382,8 @@ app.post('/webhook', async (req, res) => {
                 return res.json({ fulfillmentText: resp });
             }
             else if (textoLimpio === '5' || textoLimpio.includes('soporte')) {
-                const resp = "Un agente se comunicará contigo a la brevedad. Por favor, compártenos tu número de WhatsApp.";
+                // Soporte: enlace directo a WhatsApp
+                const resp = `📞 Contáctanos por WhatsApp para soporte inmediato:\n${SOPORTE_WHATSAPP}\n\nUn agente te atenderá en breve.`;
                 session.historial.push({ role: "assistant", content: resp });
                 return res.json({ fulfillmentText: resp });
             }
@@ -576,9 +499,8 @@ app.post('/webhook', async (req, res) => {
             }
         }
 
-        // ESPERANDO DATOS DE CONTACTO (PROCESAMIENTO)
+        // ESPERANDO DATOS DE CONTACTO
         if (session.estado === 'esperando_datos_contacto') {
-            // Ya se extrajo al inicio; ahora verificamos que estén los tres
             if (session.datosCliente.nombre && session.datosCliente.correo && session.datosCliente.telefono) {
                 session.estado = 'esperando_fechas';
                 const resp = `Gracias ${session.datosCliente.nombre}. Ahora necesito las fechas de renta para el ${session.autoSeleccionado.vehiculo}:\n📅 Fecha de inicio (DD/MM/AAAA)\n📅 Fecha de fin (DD/MM/AAAA)`;
@@ -589,7 +511,7 @@ app.post('/webhook', async (req, res) => {
             }
         }
 
-        // ESPERANDO FECHAS (CON VALIDACIÓN REAL)
+        // ESPERANDO FECHAS
         if (session.estado === 'esperando_fechas') {
             const fechasMatch = queryText.match(/(\d{1,2}\/\d{1,2}\/\d{4}).*?(\d{1,2}\/\d{1,2}\/\d{4})/);
             if (fechasMatch) {
@@ -637,7 +559,7 @@ app.post('/webhook', async (req, res) => {
             }
         }
 
-        // ESPERANDO DIRECCIÓN
+        // ESPERANDO DIRECCIÓN (confirmación de reserva - solo correo)
         if (session.estado === 'esperando_direccion') {
             session.direccionEntrega = queryText;
             
@@ -656,16 +578,11 @@ app.post('/webhook', async (req, res) => {
                 resp += `💰 Total: $${session.reserva.precio_total}\n`;
                 resp += `📍 Dirección: ${session.direccionEntrega}\n`;
                 resp += `📋 Folio: ${folio}\n\n`;
-                resp += `Te hemos enviado los detalles a tu correo y WhatsApp. ¡Gracias por elegir AutoRent!`;
+                resp += `Te hemos enviado los detalles a tu correo. ¡Gracias por elegir AutoRent!`;
                 
-                // Enviar correo (sin esperar a que termine)
+                // Solo correo, nada de WhatsApp
                 if (session.datosCliente.correo) {
-                    enviarCorreoConfirmacion(session.datosCliente.correo, session.reserva, cliente, folio, session.direccionEntrega).catch(err => console.error("Error correo:", err));
-                }
-                // Enviar WhatsApp (sin esperar)
-                if (session.datosCliente.telefono) {
-                    const mensajeWpp = `✅ *Reserva Confirmada*\n\n🚗 *Vehículo:* ${session.reserva.vehiculo}\n📅 *Fechas:* ${session.reserva.fecha_inicio} - ${session.reserva.fecha_fin}\n💰 *Total:* $${session.reserva.precio_total}\n📍 *Dirección:* ${session.direccionEntrega}\n📋 *Folio:* ${folio}\n\nRealiza transferencia a CLABE 638180010085123365 (Banorte). ¡Gracias!`;
-                    enviarWhatsApp(session.datosCliente.telefono, mensajeWpp).catch(err => console.error("Error WhatsApp:", err));
+                    await enviarCorreoConfirmacion(session.datosCliente.correo, session.reserva, cliente, folio, session.direccionEntrega);
                 }
                 
                 session.estado = 'inicio';
@@ -675,13 +592,13 @@ app.post('/webhook', async (req, res) => {
             }
         }
 
-        // CANCELACIÓN
+        // CANCELACIÓN (solo actualiza en Excel, sin WhatsApp)
         if (session.estado === 'cancelar_pedir_folio') {
             const folio = queryText.trim().toUpperCase();
             const cancelado = await cancelarReservaEnExcel(folio);
             if (cancelado) {
                 session.estado = 'inicio';
-                return res.json({ fulfillmentText: `✅ Reserva ${folio} cancelada exitosamente.` });
+                return res.json({ fulfillmentText: `✅ Reserva ${folio} cancelada exitosamente. Se ha actualizado el estado en nuestro sistema.` });
             } else {
                 return res.json({ fulfillmentText: `No se pudo cancelar. Verifica el folio.` });
             }
@@ -701,5 +618,5 @@ app.listen(port, () => {
     console.log(`🚀 AutoRent Webhook corriendo en puerto ${port}`);
     console.log(`📁 Archivos estáticos servidos desde /public`);
     console.log(`🔗 Catálogo: ${CATALOGO_URL}`);
-    console.log(`🧪 Endpoint de prueba WhatsApp (Green API): POST /test-whatsapp`);
+    console.log(`📞 Soporte WhatsApp: ${SOPORTE_WHATSAPP}`);
 });
