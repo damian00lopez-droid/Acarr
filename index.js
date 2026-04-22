@@ -159,16 +159,24 @@ async function enviarCorreoCancelacion(correoDestino, reservaData, folio) {
 }
 
 // ===============================
-// 🔹 OBTENER RESERVA POR FOLIO (para cancelación)
+// 🔹 OBTENER RESERVA POR FOLIO (CORREGIDO)
 // ===============================
 async function obtenerReservaPorFolio(folio) {
     try {
-        const response = await fetch(`${sheetdbUrl}/Folio/${folio}?sheet=Reservas`);
-        if (!response.ok) return null;
+        // Método correcto para SheetDB: /search?sheet=Reservas&Folio=valor
+        const url = `${sheetdbUrl}/search?sheet=Reservas&Folio=${encodeURIComponent(folio)}`;
+        console.log(`🔍 Buscando reserva: ${url}`);
+        const response = await fetch(url);
+        if (!response.ok) {
+            console.log(`⚠️ Error HTTP: ${response.status}`);
+            return null;
+        }
         const data = await response.json();
         if (data && data.length > 0) {
+            console.log(`✅ Reserva encontrada: ${data[0].Folio}`);
             return data[0];
         }
+        console.log(`❌ No se encontró reserva con folio ${folio}`);
         return null;
     } catch (error) {
         console.error("❌ Error obteniendo reserva:", error);
@@ -181,7 +189,9 @@ async function obtenerReservaPorFolio(folio) {
 // ===============================
 async function cancelarReservaEnExcel(folio) {
     try {
-        const updateResponse = await fetch(`${sheetdbUrl}/Folio/${folio}?sheet=Reservas`, {
+        // Actualizar estado a 'Cancelada' usando PATCH
+        const updateUrl = `${sheetdbUrl}/Folio/${folio}?sheet=Reservas`;
+        const updateResponse = await fetch(updateUrl, {
             method: 'PATCH',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ data: { Estado: 'Cancelada' } })
@@ -412,7 +422,7 @@ app.post('/webhook', async (req, res) => {
         }
         
         // ===============================
-        // 🔁 CANCELAR EN CUALQUIER MOMENTO
+        // 🔁 CANCELAR EN CUALQUIER MOMENTO DEL FLUJO DE RENTA
         // ===============================
         const estadosRenta = ['preguntando_puertas', 'preguntando_asientos', 'preguntando_transmision', 
                               'esperando_modelo', 'esperando_datos_contacto', 'esperando_fechas', 'esperando_direccion'];
@@ -425,7 +435,7 @@ app.post('/webhook', async (req, res) => {
         const palabrasMenu = ['hola', 'menu', 'inicio', 'buenos dias', 'buenas tardes', 'buenas noches', 'opciones', 'reiniciar', 'buenas'];
         if (!sesiones.has(sessionId) || palabrasMenu.includes(textoLimpio) || textoLimpio === '0') {
             const menu = `¡Hola! Bienvenido a AutoRent 🚗\n\n¿Qué deseas hacer hoy?\n1️⃣ Rentar un Auto\n2️⃣ Ver Catálogo Completo\n3️⃣ Cancelar Reserva\n4️⃣ Requisitos para Rentar\n5️⃣ Soporte Técnico`;
-            reiniciarSesion(session); // limpia todo
+            reiniciarSesion(session);
             session.historial.push({ role: "user", content: queryText });
             session.historial.push({ role: "assistant", content: menu });
             return res.json({ fulfillmentMessages: [{ text: { text: [menu] } }] });
@@ -452,6 +462,7 @@ app.post('/webhook', async (req, res) => {
                 return res.json({ fulfillmentText: resp });
             }
             else if (textoLimpio === '4' || textoLimpio.includes('requisito')) {
+                session.estado = 'mostrando_requisitos';
                 const resp = "📋 Requisitos para rentar:\n• INE/Pasaporte vigente\n• Licencia de conducir vigente\n• Pago mediante transferencia bancaria (CLABE: 638180010085123365)\n• Mayor de 21 años\n\n¿Te gustaría rentar un auto ahora? (Responde 'Sí' o 'No')";
                 session.historial.push({ role: "assistant", content: resp });
                 return res.json({ fulfillmentText: resp });
@@ -664,7 +675,7 @@ app.post('/webhook', async (req, res) => {
             }
         }
 
-        // CANCELACIÓN (con envío de correo)
+        // CANCELACIÓN DE RESERVA (con envío de correo)
         if (session.estado === 'cancelar_pedir_folio') {
             const folio = queryText.trim().toUpperCase();
             const reservaData = await obtenerReservaPorFolio(folio);
